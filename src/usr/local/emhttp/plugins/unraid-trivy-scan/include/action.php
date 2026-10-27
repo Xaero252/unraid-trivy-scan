@@ -1,0 +1,24 @@
+<?php
+/* unraid-trivy-scan: POST endpoint for the page buttons (start, stop, update-db). Fixed command list, no user
+ * input reaches the shell. Unraid's own request prologue already checks csrf_token on every POST; this file
+ * checks it again against var.ini so it also holds where that prologue is absent. */
+require_once __DIR__ . '/lib.php';
+header('Content-Type: application/json');
+header('Cache-Control: no-store');
+header('X-Content-Type-Options: nosniff');
+
+function uts_out(int $code, array $body): void { http_response_code($code); echo json_encode($body); exit; }
+
+if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') uts_out(405, ['ok' => false, 'error' => 'POST only']);
+$var = @parse_ini_file(uts_path('varini'));
+$token = $_POST['csrf_token'] ?? '';
+if (!is_array($var) || !is_string($var['csrf_token'] ?? null) || $var['csrf_token'] === ''
+    || !is_string($token) || !hash_equals($var['csrf_token'], $token)) uts_out(403, ['ok' => false, 'error' => 'invalid csrf_token']);
+
+$actions = ['start' => 'start', 'stop' => 'stop', 'update-db' => 'update-db'];
+$a = $_POST['action'] ?? '';
+if (!is_string($a) || !isset($actions[$a])) uts_out(400, ['ok' => false, 'error' => 'unknown action']);
+
+$out = []; $rc = 0;
+exec(escapeshellarg(uts_path('script')) . ' ' . escapeshellarg($actions[$a]) . ' 2>&1', $out, $rc);
+uts_out($rc === 0 ? 200 : 500, ['ok' => $rc === 0, 'message' => implode("\n", array_slice($out, -3))]);

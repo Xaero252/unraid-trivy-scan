@@ -1,0 +1,9 @@
+<?php
+/* unraid-trivy-scan: GET, the last report (include/aggregate.php output) as JSON. Read-only. */
+require_once __DIR__ . '/lib.php';
+header('Content-Type: application/json');
+header('Cache-Control: no-store');
+header('X-Content-Type-Options: nosniff');
+$f = uts_path('data') . '/report/report.json';
+if (!is_file($f)) { echo 'null'; exit; }
+readfile($f);

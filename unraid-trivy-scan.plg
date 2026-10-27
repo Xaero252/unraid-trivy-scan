@@ -1,0 +1,77 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+  <!ENTITY name      "unraid-trivy-scan">
+  <!ENTITY author    "unraid-trivy-scan project">
+  <!ENTITY version   "2026.10.27">
+  <!ENTITY gitURL    "https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main">
+  <!ENTITY pluginURL "&gitURL;/&name;.plg">
+  <!ENTITY pkg       "&name;-&version;-x86_64-1.txz">
+  <!ENTITY pkgURL    "&gitURL;/packages/&pkg;">
+  <!ENTITY md5       "66d8493f5be054d1d470362494fe671f">
+]>
+<!-- Vulnerability scan of Docker container images with a pinned Trivy release.
+     Install: Plugins, Install Plugin, https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main/unraid-trivy-scan.plg
+     The package is downloaded from packages/ in the same repository and MD5-checked.
+     Bump &version; on EVERY change (YYYY.MM.DD plus an optional letter); build.sh fills in &md5;.
+     The Trivy image (version and digest) is pinned in one place: TRIVY_IMAGE in scripts/trivy-scan.
+     The install step runs at every boot: it must never scan or download anything. -->
+<PLUGIN name="&name;" author="&author;" version="&version;" min="7.0.0" icon="shield"
+        launch="Settings/TrivyScan" pluginURL="&pluginURL;" support="https://github.com/luuvasara/unraid-trivy-scan/issues">
+
+<CHANGES>
+###2026.10.27
+- First release.
+- Scans the images of running containers (optionally also stopped ones) by image ID with Trivy 0.76.1, pinned by version and digest.
+- Three container roles: the database download has network but no Docker socket; the local scan has the socket but runs with --network none and a read-only database; the optional registry check has network but no socket and is the only one that can receive registry logins.
+- Report: one row per CVE with the affected images and packages, severity and fix-status filters (CVEs without a fix hidden by default), search, sorting, paging, failed images with the reason, warnings.
+- Dashboard tile, optional header tab, notification on new fixable critical CVEs.
+- Settings are read as data and validated on save and on read; an invalid cron schedule never reaches cron.
+- No scan or download on install or at boot; a running scan is stopped on upgrade and removal; optional cleanup of the data directory and the Trivy image on removal.
+</CHANGES>
+
+<!-- Pre-install: data dir on flash, stop a running scan before its script is replaced (upgrade), drop older packages. -->
+<FILE Run="/bin/bash">
+<INLINE>
+mkdir -p /boot/config/plugins/&name;
+if [ -x /usr/local/emhttp/plugins/&name;/scripts/trivy-scan ]; then
+  /usr/local/emhttp/plugins/&name;/scripts/trivy-scan stop >/dev/null 2>&amp;1
+fi
+for f in /boot/config/plugins/&name;/&name;-*-x86_64-1.txz; do
+  case $f in */&name;-&version;-x86_64-1.txz) ;; *) [ -f "$f" ] &amp;&amp; rm -f "$f" ;; esac
+done
+</INLINE>
+</FILE>
+
+<!-- The package. -->
+<FILE Name="/boot/config/plugins/&name;/&pkg;" Run="upgradepkg --install-new --reinstall">
+<URL>&pkgURL;</URL>
+<MD5>&md5;</MD5>
+</FILE>
+
+<!-- Post-install (also at every boot): runtime dir and the cron entry from the saved settings. No scan, no download. -->
+<FILE Run="/bin/bash">
+<INLINE>
+chmod 755 /usr/local/emhttp/plugins/&name;/scripts/trivy-scan
+mkdir -p /var/run/&name;
+/usr/local/emhttp/plugins/&name;/scripts/trivy-scan apply
+echo ""
+echo "Trivy Scan &version; installed. No scan has been started."
+echo "Open Settings, Trivy Scan to run the first scan or set a schedule. The first scan downloads the pinned"
+echo "Trivy image and the vulnerability database (about 1.6 GB on disk, plus about 1.5 GB for the Java database)."
+</INLINE>
+</FILE>
+
+<!-- Remove: stop, remove the cron entry, optional data/image cleanup (setting "When the plugin is removed"). -->
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+if [ -x /usr/local/emhttp/plugins/&name;/scripts/trivy-scan ]; then
+  /usr/local/emhttp/plugins/&name;/scripts/trivy-scan uninstall
+fi
+removepkg &name;-&version;-x86_64-1 >/dev/null 2>&amp;1
+rm -rf /usr/local/emhttp/plugins/&name; /var/run/&name;
+rm -f /var/log/&name;.log /boot/config/plugins/&name;/&name;-*-x86_64-1.txz
+echo "Trivy Scan removed. Settings are kept in /boot/config/plugins/&name;/ (delete that folder to forget them)."
+</INLINE>
+</FILE>
+
+</PLUGIN>

@@ -1,0 +1,7 @@
+Menu="Utilities"
+Type="xmenu"
+Title="Trivy Scan"
+Icon="fa-shield"
+Tag="shield"
+Tabs="true"
+---

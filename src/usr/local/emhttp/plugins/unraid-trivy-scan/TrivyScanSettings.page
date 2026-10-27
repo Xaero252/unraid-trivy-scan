@@ -1,0 +1,99 @@
+Menu="TrivyScan:2 TrivyScanTab:2"
+Title="Settings"
+Tag="gear"
+Markdown="false"
+---
+<?php
+/* Settings form. Saved by Unraid's /update.php into the plugin's KEY="value" file; include/validate.php checks
+ * every value before the write (#include), then "trivy-scan apply" writes or removes the cron entry (#command).
+ * Values shown here come from uts_config(), which validates on read; everything echoed goes through uts_h(). */
+$uts_root = ($docroot ?? '/usr/local/emhttp') . '/plugins/unraid-trivy-scan';
+require_once "$uts_root/include/lib.php";
+$uts_bad = [];
+$uts = uts_config($uts_bad);
+$uts_v = (int)@filemtime("$uts_root/assets/settings.js");
+$uts_image = trim((string)@shell_exec(escapeshellarg(uts_path('script')) . ' image 2>/dev/null'));
+$uts_presets = ['' => 'Disabled', '30 3 * * *' => 'Daily at 03:30', '30 3 * * 0' => 'Weekly, Sunday 03:30',
+                '30 3 1 * *' => 'Monthly, 1st at 03:30'];
+$uts_preset_cur = array_key_exists($uts['SCHEDULE'], $uts_presets) ? $uts['SCHEDULE'] : 'custom';
+$yn = ['no' => 'No', 'yes' => 'Yes'];
+?>
+<link rel="stylesheet" href="/plugins/unraid-trivy-scan/assets/trivy-scan.css?v=<?=$uts_v?>">
+<div class="uts uts-settings">
+<?php if ($uts_bad): ?>
+<p class="uts-notice uts-notice-warn" role="alert">The settings file has invalid values, defaults are used instead:
+<?php foreach ($uts_bad as $k => $v): ?><code><?=uts_h($k)?>=<?=uts_h($v)?></code> <?php endforeach; ?>
+Apply the form to rewrite the file.</p>
+<?php endif; ?>
+
+<form method="POST" action="/update.php" target="progressFrame" id="uts-form">
+<input type="hidden" name="#file" value="<?=uts_h(uts_path('cfg'))?>">
+<input type="hidden" name="#include" value="plugins/unraid-trivy-scan/include/validate.php">
+<input type="hidden" name="#command" value="/plugins/unraid-trivy-scan/scripts/trivy-scan">
+<input type="hidden" name="#arg[1]" value="apply">
+<input type="hidden" name="csrf_token" value="<?=uts_h($var['csrf_token'] ?? '')?>">
+
+<h3 class="uts-h">Scanning</h3>
+<dl>
+  <dt><label for="uts-preset">Scheduled scan</label></dt>
+  <dd>
+    <select id="uts-preset" aria-describedby="uts-sched-help">
+      <?=uts_options($uts_presets + ['custom' => 'Custom (cron)'], $uts_preset_cur)?>
+    </select>
+    <input type="text" name="SCHEDULE" id="uts-schedule" value="<?=uts_h($uts['SCHEDULE'])?>" placeholder="m h dom mon dow"
+           pattern="[0-9*\/,\-]+( [0-9*\/,\-]+){4}" spellcheck="false" autocomplete="off" aria-label="Cron schedule"
+           aria-describedby="uts-sched-help uts-sched-err">
+    <span class="uts-field-error" id="uts-sched-err" role="alert" hidden>Five fields: minute hour day month weekday, numbers, * , - / only.</span>
+  </dd>
+</dl>
+<blockquote class="inline_help" id="uts-sched-help">Cron format, five fields (minute hour day-of-month month day-of-week), digits and <code>* , - /</code> only. Empty means no scheduled scan. An invalid schedule is never written to cron. Nothing is scanned or downloaded until the first scan, scheduled or started by hand.</blockquote>
+
+<dl>
+  <dt><label for="uts-scope">Containers to scan</label></dt>
+  <dd><select name="SCOPE" id="uts-scope"><?=uts_options(['running' => 'Running containers', 'all' => 'Running and stopped containers'], $uts['SCOPE'])?></select></dd>
+  <dt><label for="uts-timeout">Timeout per image</label></dt>
+  <dd><select name="TIMEOUT" id="uts-timeout"><?=uts_options(['15' => '15 minutes', '30' => '30 minutes', '60' => '1 hour', '120' => '2 hours'], $uts['TIMEOUT'])?></select></dd>
+  <dt><label for="uts-java">Java database</label></dt>
+  <dd><select name="JAVA_DB" id="uts-java"><?=uts_options(['yes' => 'Download (about 1.5 GB on disk)', 'no' => 'Do not download'], $uts['JAVA_DB'])?></select></dd>
+</dl>
+<blockquote class="inline_help">The scanner that reads your local images runs without network access, so it can only use databases downloaded beforehand. Without the Java database, images that contain Java packages (jar files) are listed under "Could not scan". An image that takes longer than the timeout is stopped and listed with the reason.</blockquote>
+
+<h3 class="uts-h">Registry check</h3>
+<dl>
+  <dt><label for="uts-reg">Check whether an image update fixes a CVE</label></dt>
+  <dd><select name="REGISTRY_CHECK" id="uts-reg"><?=uts_options($yn, $uts['REGISTRY_CHECK'])?></select></dd>
+  <dt><label for="uts-auth">Use registry logins</label></dt>
+  <dd><select name="REGISTRY_AUTH" id="uts-auth"><?=uts_options($yn, $uts['REGISTRY_AUTH'])?></select></dd>
+</dl>
+<blockquote class="inline_help">The registry check scans the image that each container's tag points to in its registry today and marks the CVEs a newer image no longer has. It downloads those images' layers from the registry (Docker Hub rate limits apply). It runs in a separate container that has network access but no Docker socket. <strong>"Use registry logins" gives that container your /root/.docker/config.json (read-only)</strong>; only needed for private images. The container with the Docker socket never receives it.</blockquote>
+
+<h3 class="uts-h">Display and notifications</h3>
+<dl>
+  <dt><label for="uts-notify">Notify on new fixable critical CVEs</label></dt>
+  <dd><select name="NOTIFY" id="uts-notify"><?=uts_options(['yes' => 'Yes', 'no' => 'No'], $uts['NOTIFY'])?></select></dd>
+  <dt><label for="uts-tab">Show a header tab</label></dt>
+  <dd><select name="SHOW_TAB" id="uts-tab"><?=uts_options($yn, $uts['SHOW_TAB'])?></select></dd>
+  <dt><label for="uts-tile">Dashboard tile</label></dt>
+  <dd><select name="DASH_TILE" id="uts-tile"><?=uts_options(['yes' => 'Yes', 'no' => 'No'], $uts['DASH_TILE'])?></select></dd>
+</dl>
+
+<h3 class="uts-h">Removal</h3>
+<dl>
+  <dt><label for="uts-rm">When the plugin is removed</label></dt>
+  <dd><select name="REMOVE_DATA" id="uts-rm"><?=uts_options(['no' => 'Keep databases, report and the Trivy image', 'yes' => 'Delete databases, report and the Trivy image'], $uts['REMOVE_DATA'])?></select></dd>
+</dl>
+
+<dl>
+  <dt>&nbsp;</dt>
+  <dd><input type="submit" value="Apply"><input type="button" value="Done" onclick="done()"></dd>
+</dl>
+</form>
+
+<h3 class="uts-h">About</h3>
+<dl class="uts-about">
+  <dt>Scanner image</dt><dd><code><?=uts_h($uts_image ?: 'unknown')?></code></dd>
+  <dt>Data directory</dt><dd><code>/mnt/user/appdata/unraid-trivy-scan</code> (databases, about 1.6 GB plus the Java database; last report)</dd>
+  <dt>Log</dt><dd><code>/var/log/unraid-trivy-scan.log</code></dd>
+</dl>
+</div>
+<script src="/plugins/unraid-trivy-scan/assets/settings.js?v=<?=$uts_v?>"></script>

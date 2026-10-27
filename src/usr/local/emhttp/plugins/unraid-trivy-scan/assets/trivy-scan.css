@@ -1,0 +1,159 @@
+/* unraid-trivy-scan. Colours come from the Unraid theme variables (black, white, gray, azure), so the page
+ * follows the active theme. The only fixed colours are the severity badges: each is a self-contained pair
+ * (white text on a dark fill, or dark text on amber) at 4.5:1 or better, which reads on any theme background. */
+
+.uts, .uts-tile {
+  /* primitives (severity fills) */
+  --uts-red-900: #b71c1c;
+  --uts-orange-900: #bf360c;
+  --uts-amber-500: #f2b01e;
+  --uts-blue-800: #1565c0;
+  --uts-grey-700: #5f6368;
+  --uts-ink: #1a1a1a;
+  --uts-paper: #ffffff;
+
+  /* semantic, from the theme where it has one */
+  --uts-text: var(--text-color, inherit);
+  --uts-text-muted: var(--alt-text-color, #8a8a8a);
+  --uts-surface: var(--mild-background-color, rgba(127, 127, 127, 0.08));
+  --uts-border: var(--table-border-color, var(--border-color, rgba(127, 127, 127, 0.35)));
+  --uts-head: var(--table-header-background-color, var(--uts-surface));
+  --uts-hover: var(--hover-table-row-background-color, rgba(127, 127, 127, 0.12));
+  --uts-link: var(--link-text-color, inherit);
+  --uts-warn: var(--brand-orange, #e8a33d);
+  --uts-error: var(--brand-red, #e22828);
+
+  --uts-sev-critical-bg: var(--uts-red-900);
+  --uts-sev-critical-fg: var(--uts-paper);
+  --uts-sev-high-bg: var(--uts-orange-900);
+  --uts-sev-high-fg: var(--uts-paper);
+  --uts-sev-medium-bg: var(--uts-amber-500);
+  --uts-sev-medium-fg: var(--uts-ink);
+  --uts-sev-low-bg: var(--uts-blue-800);
+  --uts-sev-low-fg: var(--uts-paper);
+  --uts-sev-unknown-bg: var(--uts-grey-700);
+  --uts-sev-unknown-fg: var(--uts-paper);
+
+  --uts-space-1: 4px;
+  --uts-space-2: 8px;
+  --uts-space-3: 16px;
+  --uts-space-4: 24px;
+  --uts-radius: 4px;
+  --uts-font-small: 0.92em;
+  --uts-font-num: 1.9em;
+  --uts-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.uts { color: var(--uts-text); margin-bottom: var(--uts-space-4); }
+.uts a { color: var(--uts-link); }
+.uts code, .uts-mono { font-family: var(--uts-mono); font-size: var(--uts-font-small); overflow-wrap: anywhere; }
+.uts-muted, .uts-hint, .uts-meta { color: var(--uts-text-muted); }
+.uts-hint { font-size: var(--uts-font-small); }
+.uts-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.uts :focus-visible { outline: 2px solid var(--uts-link); outline-offset: 2px; }
+
+/* status bar */
+.uts-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--uts-space-2) var(--uts-space-3);
+  padding: var(--uts-space-2) var(--uts-space-3); margin: var(--uts-space-2) 0 var(--uts-space-3);
+  border: 1px solid var(--uts-border); border-radius: var(--uts-radius); background: var(--uts-surface); }
+.uts-bar-text { flex: 1 1 320px; overflow-wrap: anywhere; }
+.uts-bar progress { width: 160px; }
+.uts-bar-actions { display: flex; gap: var(--uts-space-2); }
+.uts-bar-actions button { margin: 0; }
+
+/* summary */
+.uts-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--uts-space-2); margin-bottom: var(--uts-space-2); }
+.uts-card { display: flex; flex-direction: column; gap: var(--uts-space-1); padding: var(--uts-space-2) var(--uts-space-3);
+  border: 1px solid var(--uts-border); border-radius: var(--uts-radius); background: var(--uts-surface); }
+.uts-card-num { font-size: var(--uts-font-num); font-weight: bold; line-height: 1.1; }
+.uts-card-sub { color: var(--uts-text-muted); font-size: var(--uts-font-small); }
+.uts-card-critical { border-left: 4px solid var(--uts-sev-critical-bg); }
+.uts-card-high { border-left: 4px solid var(--uts-sev-high-bg); }
+.uts-card-medium { border-left: 4px solid var(--uts-sev-medium-bg); }
+.uts-card-low { border-left: 4px solid var(--uts-sev-low-bg); }
+.uts-card-unknown { border-left: 4px solid var(--uts-sev-unknown-bg); }
+.uts-card-fail .uts-card-num { color: var(--uts-error); }
+.uts-meta { margin: var(--uts-space-1) 0 var(--uts-space-3); font-size: var(--uts-font-small); }
+
+.uts-badge { display: inline-block; min-width: 4.8em; padding: 1px var(--uts-space-2); border-radius: var(--uts-radius);
+  font-size: var(--uts-font-small); font-weight: bold; text-align: center; line-height: 1.5; }
+.uts-sev-critical { background: var(--uts-sev-critical-bg); color: var(--uts-sev-critical-fg); }
+.uts-sev-high { background: var(--uts-sev-high-bg); color: var(--uts-sev-high-fg); }
+.uts-sev-medium { background: var(--uts-sev-medium-bg); color: var(--uts-sev-medium-fg); }
+.uts-sev-low { background: var(--uts-sev-low-bg); color: var(--uts-sev-low-fg); }
+.uts-sev-unknown { background: var(--uts-sev-unknown-bg); color: var(--uts-sev-unknown-fg); }
+
+/* notices */
+.uts-notice { margin: 0 0 var(--uts-space-3); padding: var(--uts-space-2) var(--uts-space-3); border: 1px solid var(--uts-border);
+  border-left-width: 4px; border-radius: var(--uts-radius); background: var(--uts-surface); overflow-wrap: anywhere; }
+.uts-notice ul { margin: var(--uts-space-1) 0 0; padding-left: var(--uts-space-4); }
+.uts-notice-warn { border-left-color: var(--uts-warn); }
+.uts-notice-error { border-left-color: var(--uts-error); }
+.uts-notice summary, .uts-images summary { cursor: pointer; font-weight: bold; }
+.uts-images { margin: 0 0 var(--uts-space-3); }
+.uts-images > .uts-scroll { margin-top: var(--uts-space-2); }
+
+/* filters */
+.uts-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--uts-space-2) var(--uts-space-4); margin: var(--uts-space-2) 0; }
+.uts-sevs { display: flex; flex-wrap: wrap; gap: var(--uts-space-1) var(--uts-space-2); margin: 0; padding: 0; border: 0; }
+.uts-sevs legend { padding: 0; margin-bottom: var(--uts-space-1); color: var(--uts-text-muted); font-size: var(--uts-font-small); }
+.uts-check { display: inline-flex; align-items: center; gap: var(--uts-space-1); min-height: 24px; cursor: pointer; }
+.uts-field { display: flex; flex-direction: column; gap: var(--uts-space-1); }
+.uts-field > span { color: var(--uts-text-muted); font-size: var(--uts-font-small); }
+.uts-field select, .uts-field input { margin: 0; min-width: 12em; }
+
+/* tables */
+.uts-scroll { overflow-x: auto; }
+.uts-table { width: 100%; border-collapse: collapse; }
+.uts-table th, .uts-table td { padding: var(--uts-space-1) var(--uts-space-2); border-bottom: 1px solid var(--uts-border); text-align: left; vertical-align: top; }
+.uts-table thead th { background: var(--uts-head); font-weight: bold; white-space: nowrap; }
+.uts-table tbody tr.uts-row:hover, .uts-table-plain tbody tr:hover { background: var(--uts-hover); }
+.uts-num { text-align: right; font-variant-numeric: tabular-nums; }
+.uts-table td { white-space: normal; overflow-wrap: anywhere; }
+.uts-title { min-width: 16em; }
+.uts-more { color: var(--uts-text-muted); }
+.uts-empty { padding: var(--uts-space-4) var(--uts-space-2); text-align: center; color: var(--uts-text-muted); }
+/* text-like buttons (sort headers, row toggles). Unraid styles every button (specificity 0,1,1), so these
+   selectors are one class stronger and reset exactly what that rule sets. */
+.uts button.uts-sort, .uts button.uts-toggle {
+  font: inherit; letter-spacing: normal; text-transform: none; text-align: left; white-space: nowrap;
+  min-width: 0; margin: 0; padding: 0; border: 0; border-radius: var(--uts-radius);
+  background: none; color: inherit; cursor: pointer; }
+.uts button.uts-sort { font-weight: bold; }
+.uts button.uts-sort:hover { background: none; color: var(--uts-link); }
+.uts button.uts-toggle { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; }
+.uts button.uts-toggle:hover { background: var(--uts-hover); color: inherit; }
+.uts button.uts-sort:focus-visible, .uts button.uts-toggle:focus-visible { outline: 2px solid var(--uts-link); outline-offset: 2px; }
+.uts-tcell { width: 28px; }
+
+.uts-detail > td { background: var(--uts-surface); padding: var(--uts-space-2) var(--uts-space-3) var(--uts-space-3); }
+.uts-inner { font-size: var(--uts-font-small); }
+.uts-fix { white-space: nowrap; }
+.uts-fix-none { color: var(--uts-text-muted); }
+.uts-pager { display: flex; flex-wrap: wrap; align-items: center; gap: var(--uts-space-2); margin-top: var(--uts-space-2); }
+.uts-pager-info { flex: 1 1 auto; color: var(--uts-text-muted); }
+.uts-pager button { margin: 0; }
+.uts-empty-state { padding: var(--uts-space-4); border: 1px dashed var(--uts-border); border-radius: var(--uts-radius); max-width: 60em; }
+
+/* settings */
+.uts-h { margin: var(--uts-space-4) 0 var(--uts-space-2); font-size: 1.1em; }
+.uts-settings dl dd input[type=text] { width: 14em; font-family: var(--uts-mono); }
+.uts-readonly { opacity: 1; color: var(--uts-text-muted); }
+.uts-field-error { display: block; color: var(--uts-error); font-size: var(--uts-font-small); }
+.uts-field-error[hidden] { display: none; }
+.uts-about dd code { overflow-wrap: anywhere; }
+
+/* dashboard tile */
+.uts-tile-body { display: flex; flex-wrap: wrap; gap: var(--uts-space-1) var(--uts-space-2); align-items: center; }
+.uts-tile-sev { padding: 1px var(--uts-space-2); border-radius: var(--uts-radius); font-size: var(--uts-font-small); }
+.uts-tile-of { font-weight: normal; }
+.uts-tile-note { flex-basis: 100%; color: var(--uts-text-muted); font-size: var(--uts-font-small); }
+.uts-tile-fail { color: var(--uts-error); }
+
+@media (max-width: 700px) {
+  .uts-title { min-width: 10em; }
+  .uts-field select, .uts-field input { min-width: 9em; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .uts *, .uts *::before, .uts *::after { transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

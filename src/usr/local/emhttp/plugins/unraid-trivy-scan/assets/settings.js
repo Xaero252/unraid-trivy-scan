@@ -1,0 +1,50 @@
+/* unraid-trivy-scan settings page: schedule preset <-> cron field, client-side cron check (the server checks
+ * again in include/validate.php and the scan script checks on read). */
+(function () {
+  'use strict';
+  var preset = document.getElementById('uts-preset');
+  var field = document.getElementById('uts-schedule');
+  var err = document.getElementById('uts-sched-err');
+  var form = document.getElementById('uts-form');
+  if (!preset || !field || !form) return;
+
+  function fieldOk(f, min, max) {
+    return f.split(',').every(function (item) {
+      var m = /^(\*|(\d{1,2})(-(\d{1,2}))?)(\/(\d{1,2}))?$/.exec(item);
+      if (!m) return false;
+      if (m[1] !== '*') {
+        var a = +m[2], b = m[4] !== undefined ? +m[4] : a;
+        if (a < min || b > max || a > b) return false;
+      }
+      return m[6] === undefined || (+m[6] >= 1 && +m[6] <= max);
+    });
+  }
+  function cronOk(s) {
+    if (s === '') return true;
+    if (!/^[0-9*\/,-]+( [0-9*\/,-]+){4}$/.test(s)) return false;
+    var f = s.split(' ');
+    return fieldOk(f[0], 0, 59) && fieldOk(f[1], 0, 23) && fieldOk(f[2], 1, 31) && fieldOk(f[3], 1, 12) && fieldOk(f[4], 0, 7);
+  }
+  function sync() {
+    var custom = preset.value === 'custom';
+    if (!custom) field.value = preset.value;
+    field.readOnly = !custom;
+    field.classList.toggle('uts-readonly', !custom);
+    check();
+  }
+  function check() {
+    var v = field.value.trim().replace(/[ \t]+/g, ' ');
+    var ok = cronOk(v);
+    field.setCustomValidity(ok ? '' : 'invalid cron schedule');
+    field.setAttribute('aria-invalid', ok ? 'false' : 'true');
+    err.hidden = ok;
+    return ok;
+  }
+  preset.addEventListener('change', sync);
+  field.addEventListener('input', check);
+  form.addEventListener('submit', function (e) {
+    field.value = field.value.trim().replace(/[ \t]+/g, ' ');
+    if (!check()) { e.preventDefault(); field.focus(); }
+  });
+  sync();
+})();

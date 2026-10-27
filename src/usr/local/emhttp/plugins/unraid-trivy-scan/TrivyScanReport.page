@@ -1,0 +1,26 @@
+Menu="TrivyScan:1 TrivyScanTab:1"
+Title="Report"
+Tag="list"
+Markdown="false"
+---
+<?php
+/* Report: everything below the status bar is drawn by assets/report.js from include/report.php (JSON) with
+ * textContent only, so values are escaped exactly once by the DOM. */
+$uts_root = ($docroot ?? '/usr/local/emhttp') . '/plugins/unraid-trivy-scan';
+require_once "$uts_root/include/lib.php";
+$uts_v = (int)@filemtime("$uts_root/assets/report.js");
+?>
+<link rel="stylesheet" href="/plugins/unraid-trivy-scan/assets/trivy-scan.css?v=<?=$uts_v?>">
+<div class="uts" id="uts-report" data-base="/plugins/unraid-trivy-scan" data-csrf="<?=uts_h($var['csrf_token'] ?? '')?>">
+  <div class="uts-bar" role="status" aria-live="polite">
+    <span class="uts-bar-text" id="uts-status">Loading...</span>
+    <progress id="uts-progress" hidden></progress>
+    <span class="uts-bar-actions">
+      <button type="button" id="uts-scan" disabled>Scan now</button>
+      <button type="button" id="uts-stop" hidden>Stop</button>
+    </span>
+  </div>
+  <div id="uts-body"><p class="uts-muted">Loading report...</p></div>
+  <noscript><p>The report needs JavaScript.</p></noscript>
+</div>
+<script src="/plugins/unraid-trivy-scan/assets/report.js?v=<?=$uts_v?>"></script>

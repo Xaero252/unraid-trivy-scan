@@ -1,0 +1,10 @@
+<?php
+/* unraid-trivy-scan: GET, run state as JSON (polled by the report page while a scan runs). Read-only. */
+require_once __DIR__ . '/lib.php';
+header('Content-Type: application/json');
+header('Cache-Control: no-store');
+header('X-Content-Type-Options: nosniff');
+$st = uts_status();
+$r = uts_report();
+$st['report'] = $r ? ['generated' => (int)($r['generated'] ?? 0)] : null;
+echo json_encode($st, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_HEX_TAG | JSON_HEX_AMP);

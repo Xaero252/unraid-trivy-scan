@@ -1,0 +1,7 @@
+Menu="Tasks:96"
+Type="xmenu"
+Title="Vulnerabilities"
+Code="f132"
+Tabs="true"
+Cond="preg_match('/^SHOW_TAB=.?yes/m', (string)@file_get_contents('/boot/config/plugins/unraid-trivy-scan/unraid-trivy-scan.cfg'))"
+---

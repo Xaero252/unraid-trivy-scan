@@ -1,0 +1,62 @@
+Menu="Dashboard:0"
+Cond="!preg_match('/^DASH_TILE=.?no/m', (string)@file_get_contents('/boot/config/plugins/unraid-trivy-scan/unraid-trivy-scan.cfg'))"
+Markdown="false"
+---
+<?php
+/* Dashboard tile (Unraid 6.12+/7 custom tile API: $mytiles[<name>][column1..3]). Server-rendered from the last
+ * report; every value is escaped with uts_h() or cast to int, once. */
+$uts_root = ($docroot ?? '/usr/local/emhttp') . '/plugins/unraid-trivy-scan';
+require_once "$uts_root/include/lib.php";
+$uts_cfg = uts_config();
+$uts_rep = uts_report();
+$uts_st  = uts_status();
+$uts_link = $uts_cfg['SHOW_TAB'] === 'yes' ? '/TrivyScanTab' : '/Settings/TrivyScan';
+if ($uts_st['running']) {
+  $uts_sub = $uts_st['total'] > 0 ? sprintf('Scanning: %d of %d', $uts_st['done'], $uts_st['total']) : 'Scan running';
+} elseif ($uts_rep) {
+  $uts_sub = 'Last scan: ' . uts_date((int)($uts_rep['generated'] ?? 0));
+} else {
+  $uts_sub = 'No scan yet';
+}
+$uts_rows = '';
+if ($uts_rep) {
+  $bs = $uts_rep['summary']['by_severity'] ?? [];
+  foreach (['CRITICAL' => 'Critical', 'HIGH' => 'High', 'MEDIUM' => 'Medium', 'LOW' => 'Low'] as $k => $label) {
+    $fx = (int)($bs[$k]['fixable'] ?? 0); $tot = (int)($bs[$k]['total'] ?? 0);
+    $uts_rows .= "<span class='uts-tile-sev uts-sev-" . strtolower($k) . "'><b>$fx</b> " . uts_h($label)
+              . " <span class='uts-tile-of'>of $tot</span></span>";
+  }
+  $img = (int)($uts_rep['summary']['images'] ?? 0); $fail = (int)($uts_rep['summary']['failed'] ?? 0);
+  $uts_rows .= "<div class='uts-tile-note'>Fixable CVEs shown first, total after. $img image(s) scanned"
+            . ($fail ? ", <span class='uts-tile-fail'>$fail could not be scanned</span>" : '') . '</div>';
+} else {
+  $uts_rows = "<div class='uts-tile-note'>Run a scan from the Trivy Scan settings page.</div>";
+}
+if (($uts_st['last']['result'] ?? '') === 'failed') {
+  $uts_rows .= "<div class='uts-tile-note uts-tile-fail'>Last run failed: " . uts_h($uts_st['last']['message']) . '</div>';
+}
+$uts_v = (int)@filemtime("$uts_root/assets/trivy-scan.css");
+$uts_sub_h = uts_h($uts_sub); $uts_link_h = uts_h($uts_link);
+$mytiles['unraid-trivy-scan']['column3'] = <<<EOT
+<tbody title="Trivy image scan" class="uts-tile">
+<tr><td>
+<link rel="stylesheet" href="/plugins/unraid-trivy-scan/assets/trivy-scan.css?v=$uts_v">
+<span class='tile-header'>
+  <span class='tile-header-left'>
+    <i class='fa fa-shield f32'></i>
+    <div class='section'>
+      <h3 class='tile-header-main'>Vulnerabilities</h3>
+      <span>$uts_sub_h</span><br>
+    </div>
+  </span>
+  <span class='tile-header-right'>
+    <span class='tile-header-right-controls'>
+      <a href='$uts_link_h' title='Open the Trivy scan report'><i class='fa fa-fw fa-external-link control'></i></a>
+    </span>
+  </span>
+</span>
+</td></tr>
+<tr><td><div class='uts-tile-body'>$uts_rows</div></td></tr>
+</tbody>
+EOT;
+?>

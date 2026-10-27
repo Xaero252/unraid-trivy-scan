@@ -1,0 +1,145 @@
+#!/bin/bash
+# shellcheck disable=SC2015,SC2016  # "check && ok || bad" is intended (ok never fails); PHP snippets are single-quoted on purpose
+# e2e.sh - end-to-end against the local Docker with the pinned Trivy image and small, old public images.
+# Pulls (if absent) nginx:1.19-alpine, alpine:3.10 and alpine:3.19.1 (tagged locally as alpine:3.19, so the
+# registry check sees an outdated image); all test containers carry the label uts-e2e=1 and are the only ones
+# scanned (UTS_PS_FILTER). A docker shim on PATH logs every docker command the plugin runs, to check the container
+# roles. At the end it removes the test containers and every image or tag it added (images that were already on
+# the host are left alone) and the data dir with the downloaded databases (E2E_KEEP=1 keeps them).
+# Needs about 2 GB free disk (vulnerability DB 1.6 GB; the Java DB is not downloaded here).
+set -uo pipefail
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+S=$HERE/src/usr/local/emhttp/plugins/unraid-trivy-scan/scripts/trivy-scan
+W=$HERE/tests/.work/e2e
+TRIVY=$(bash "$S" image)
+REAL_DOCKER=$(command -v docker)
+fail=0; ok() { echo "ok   $*"; }; bad() { echo "FAIL $*"; fail=1; }
+
+[ "$(df -Pk "$HERE" | awk 'NR==2{print $4}')" -gt 2200000 ] || { echo "FAIL less than 2.2 GB free disk"; exit 1; }
+docker info >/dev/null 2>&1 || { echo "FAIL docker not reachable"; exit 1; }
+rm -rf "${W:?}/run" "${W:?}/bin" "${W:?}"/*.log; mkdir -p "$W/appdata" "$W/run" "$W/bin" "$W/flash"
+export UTS_DATA=$W/appdata/unraid-trivy-scan UTS_RUN=$W/run UTS_LOG=$W/scan.log UTS_CFG=$W/flash/cfg \
+       UTS_CRON_FILE=$W/flash/cron UTS_PS_FILTER=label=uts-e2e=1 UTS_NOTIFY=$W/bin/notify UTS_UPDATE_CRON=/bin/true \
+       UTS_PLUGIN_DIR=$HERE/src/usr/local/emhttp/plugins/unraid-trivy-scan
+cat >"$W/bin/docker" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$W/docker.log"
+exec "$REAL_DOCKER" "\$@"
+EOF
+printf '#!/bin/sh\nprintf "%%s|" "$@" >>%s/notify.log; echo >>%s/notify.log\n' "$W" "$W" >"$W/bin/notify"
+chmod 755 "$W/bin/docker" "$W/bin/notify"
+export PATH="$W/bin:$PATH"
+
+# ---------------------------------------------------------------- test images and containers
+ADDED=()   # image references this test added
+have() { "$REAL_DOCKER" image inspect "$1" >/dev/null 2>&1; }
+need() { have "$1" || { "$REAL_DOCKER" pull -q "$1" >/dev/null && ADDED+=("$1"); }; }
+# shellcheck disable=SC2329  # called by the EXIT trap
+cleanup() {
+  "$REAL_DOCKER" ps -aq --filter label=uts-e2e=1 | xargs -r "$REAL_DOCKER" rm -f >/dev/null
+  "$REAL_DOCKER" rm -f uts-e2e-decoy >/dev/null 2>&1
+  "$REAL_DOCKER" ps -aq --filter label=unraid-trivy-scan=1 | xargs -r "$REAL_DOCKER" rm -f >/dev/null
+  local r; for r in "${ADDED[@]}"; do "$REAL_DOCKER" rmi "$r" >/dev/null 2>&1 && echo "cleanup: removed $r"; done
+  [ "${E2E_KEEP:-0}" = 1 ] || rm -rf "$W/appdata"
+}
+trap cleanup EXIT
+need "$TRIVY"; need nginx:1.19-alpine; need alpine:3.10
+if have alpine:3.19; then echo "note: alpine:3.19 already on this host; the outdated-image check uses it as is"
+else need alpine:3.19.1 && "$REAL_DOCKER" tag alpine:3.19.1 alpine:3.19 && ADDED=(alpine:3.19 "${ADDED[@]}"); fi
+D="$REAL_DOCKER"
+L=(--label uts-e2e=1 --network none)
+"$D" rm -f uts-e2e-web uts-e2e-old uts-e2e-stopped uts-e2e-byid >/dev/null 2>&1
+"$D" run -d "${L[@]}" --name uts-e2e-web nginx:1.19-alpine >/dev/null
+"$D" run -d "${L[@]}" --name uts-e2e-old alpine:3.19 sleep 3600 >/dev/null
+"$D" create "${L[@]}" --name uts-e2e-stopped alpine:3.10 sleep 3600 >/dev/null
+ID310=$("$D" image inspect -f '{{.Id}}' alpine:3.10)
+"$D" run -d "${L[@]}" --name uts-e2e-byid "$ID310" sleep 3600 >/dev/null
+ok "test containers: web (nginx:1.19-alpine), old (alpine:3.19 = 3.19.1), byid (alpine:3.10 by ID), stopped (alpine:3.10)"
+
+# report() evaluates PHP expressions written in this file against the report (test input only, never external data).
+report() { php -r '$r=json_decode(file_get_contents($argv[1]),true); echo eval("return ".$argv[2].";"), "\n";' "$UTS_DATA/report/report.json" "$1"; }
+cfg() { printf '%s\n' "$@" >"$UTS_CFG"; }
+runs_with() { grep '^run ' "$W/docker.log" | grep -c -- "$1"; }
+
+# ---------------------------------------------------------------- 1: running containers, no registry check
+cfg 'SCOPE="running"' 'REGISTRY_CHECK="no"' 'JAVA_DB="no"' 'NOTIFY="yes"' 'TIMEOUT="30"'
+: >"$W/docker.log"
+T0=$(date +%s); bash "$S" run; rc=$?
+[ $rc -eq 0 ] && ok "scan 1 finished in $(( $(date +%s) - T0 )) s (includes the DB download)" || bad "scan 1 rc=$rc: $(tail -5 "$W/scan.log")"
+[ -s "$UTS_DATA/cache/db/trivy.db" ] && ok "vulnerability DB downloaded into the data dir" || bad "no DB"
+[ "$(report '$r["summary"]["images"]')" = 3 ] && [ "$(report '$r["summary"]["failed"]')" = 0 ] && ok "3 images scanned (running only), 0 failed" || bad "scan 1 counts: $(report 'json_encode($r["summary"])')"
+[ "$(report '(int)($r["summary"]["by_severity"]["CRITICAL"]["total"] > 0 && $r["summary"]["total"] > 20)')" = 1 ] \
+  && ok "findings: $(report '$r["summary"]["total"]') CVEs, $(report '$r["summary"]["by_severity"]["CRITICAL"]["total"]') critical" || bad "too few findings"
+NAMES=$(report 'implode(",", array_map(fn($i)=>$i["name"], $r["images"]))')
+grep -q 'nginx:1.19-alpine' <<<"$NAMES" && grep -q 'alpine:3.19' <<<"$NAMES" && grep -q "image ${ID310:7:12}" <<<"$NAMES" \
+  && ok "image names: $NAMES" || bad "image names: $NAMES"
+grep -q 'stopped' <<<"$(report 'json_encode($r["images"])')" && bad "stopped container scanned with scope=running" || ok "stopped container not scanned with scope=running"
+[ "$(sed -n 's/^result=//p' "$UTS_DATA/report/last-run")" = ok ] && ok "last-run: ok" || bad "last-run: $(cat "$UTS_DATA/report/last-run")"
+grep -q 'new fixable critical' "$W/notify.log" 2>/dev/null && ok "notification sent for new fixable critical CVEs" || bad "no notification: $(cat "$W/notify.log" 2>&1)"
+# container roles, from the docker shim log
+SOCK=$(grep '^run ' "$W/docker.log" | grep -c 'docker.sock')
+[ "$SOCK" = 3 ] && ok "3 scanner containers got the Docker socket (one per image, by image ID)" || bad "socket runs: $SOCK"
+[ "$(grep '^run ' "$W/docker.log" | grep 'docker.sock' | grep -vc -- '--network none')" = 0 ] && ok "every container with the socket ran with --network none" || bad "socket without --network none"
+[ "$(grep '^run ' "$W/docker.log" | grep 'docker.sock' | grep -vc -- '/cache:ro')" = 0 ] && ok "the socket container mounts the DB read-only" || bad "socket container with writable DB"
+[ "$(grep '^run ' "$W/docker.log" | grep 'download-db-only' | grep -c 'docker.sock')" = 0 ] && [ "$(runs_with download-db-only)" = 1 ] \
+  && ok "DB download ran in its own container without the socket" || bad "DB container"
+[ "$(grep '^run ' "$W/docker.log" | grep -c 'image-src docker.*sha256:[0-9a-f]\{64\}$')" = 3 ] && ok "local scans address images by full ID" || bad "scan not by ID"
+[ "$(grep '^run ' "$W/docker.log" | grep -vc -- '--cap-drop ALL --security-opt no-new-privileges')" = 0 ] && ok "all Trivy containers: --cap-drop ALL, no-new-privileges, labelled" || bad "hardening flags"
+[ -z "$("$D" ps -aq --filter label=unraid-trivy-scan=1)" ] && [ ! -e "$UTS_RUN/pid" ] && [ ! -e "$UTS_RUN/progress" ] && ok "no leftover containers, pid or progress file" || bad "leftovers after scan 1"
+G1=$(report '$r["generated"]')
+
+# ---------------------------------------------------------------- 2: all containers, registry check with logins
+printf '{"auths":{}}\n' >"$W/fake-docker-config.json"
+export UTS_REG_AUTH=$W/fake-docker-config.json
+cfg 'SCOPE="all"' 'REGISTRY_CHECK="yes"' 'REGISTRY_AUTH="yes"' 'JAVA_DB="no"' 'NOTIFY="yes"'
+: >"$W/docker.log"; : >"$W/notify.log"
+bash "$S" run || bad "scan 2 rc=$?: $(tail -5 "$W/scan.log")"
+[ "$(report '$r["summary"]["images"]')" = 3 ] && grep -q 'uts-e2e-stopped' <<<"$(report 'json_encode($r["images"])')" \
+  && ok "scope=all: stopped container listed (shares the alpine:3.10 image with byid)" || bad "scope=all: $(report 'json_encode(array_map(fn($i)=>[$i["name"],$i["containers"]], $r["images"]))')"
+UPD=$(report 'implode(",", array_map(fn($i)=>$i["name"]."=".$i["update"], $r["images"]))')
+grep -q 'nginx:1.19-alpine=current' <<<"$UPD" && grep -q 'alpine:3.19=newer' <<<"$UPD" && grep -q "image ${ID310:7:12}=skipped" <<<"$UPD" \
+  && ok "registry states: $UPD" || bad "registry states: $UPD ($(report 'json_encode(array_map(fn($i)=>$i["update_note"], $r["images"]))'))"
+GONE=$(report 'count(array_filter($r["cves"], fn($c)=>in_array($c["fix"], ["update","both"])))')
+[ "${GONE:-0}" -gt 0 ] && ok "$GONE CVE(s) marked as fixed in the newer alpine:3.19 image" || bad "no CVE fixed by the newer image"
+AUTH=$(grep '^run ' "$W/docker.log" | grep -c 'config.json')
+[ "$AUTH" -ge 1 ] && [ "$(grep '^run ' "$W/docker.log" | grep 'config.json' | grep -c -e 'docker.sock' -e 'role=local' -e 'role=db')" = 0 ] \
+  && ok "registry logins mounted only into registry containers ($AUTH), never with the socket" || bad "config.json placement"
+[ "$(grep '^run ' "$W/docker.log" | grep 'role=remote' | grep -c 'docker.sock')" = 0 ] && ok "registry containers have no Docker socket" || bad "remote with socket"
+[ ! -s "$W/notify.log" ] && ok "no second notification for the same fixable criticals" || bad "repeated notification: $(cat "$W/notify.log")"
+cfg 'SCOPE="all"' 'REGISTRY_CHECK="yes"' 'REGISTRY_AUTH="no"' 'JAVA_DB="no"'; : >"$W/docker.log"; unset UTS_REG_AUTH
+cp "$UTS_DATA/report/report.json" "$W/report-registry.json"   # kept for the README screenshots
+
+# ---------------------------------------------------------------- 3: per-image timeout -> failures with reason
+cfg 'SCOPE="running"' 'REGISTRY_CHECK="no"' 'JAVA_DB="no"' 'NOTIFY="no"'
+UTS_TRIVY_TIMEOUT=1ms bash "$S" run || bad "scan 3 rc=$?"
+F=$(report '$r["summary"]["failed"]')
+REASON=$(report '$r["images"][0]["error"]')
+[ "$F" = 3 ] && [[ $REASON == "timed out after"* ]] && ok "simulated timeout: 3 images listed as failed, reason '$REASON'" || bad "timeout: failed=$F reason=$REASON"
+[ "$(sed -n 's/^message=//p' "$UTS_DATA/report/last-run")" = "3 image(s) scanned, 3 failed" ] && ok "last-run message counts the failures" || bad "last-run: $(cat "$UTS_DATA/report/last-run")"
+
+# ---------------------------------------------------------------- 4: stop (label-scoped), lock, previous report kept
+cfg 'SCOPE="all"' 'REGISTRY_CHECK="yes"' 'JAVA_DB="no"' 'NOTIFY="no"'
+"$D" run -d --name uts-e2e-decoy --entrypoint sleep "$TRIVY" 600 >/dev/null
+G3=$(report '$r["generated"]')
+bash "$S" start >/dev/null
+for _ in $(seq 1 100); do [ -n "$("$D" ps -q --filter label=unraid-trivy-scan=1)" ] && break; sleep 0.2; done
+[ -n "$("$D" ps -q --filter label=unraid-trivy-scan=1)" ] && ok "background scan started a labelled Trivy container" || bad "no running scan container seen"
+OUT=$(bash "$S" run 2>&1); rc=$?
+[ $rc -eq 3 ] && grep -q 'already running' <<<"$OUT" && ok "second scan refused while one runs (lock)" || bad "lock: rc=$rc $OUT"
+grep -q '^running=yes' <<<"$(bash "$S" status)" && ok "status: running=yes" || bad "status while running"
+T0=$(date +%s); bash "$S" stop >/dev/null
+[ $(( $(date +%s) - T0 )) -le 15 ] && ok "stop returned in $(( $(date +%s) - T0 )) s" || bad "stop slow"
+[ -z "$("$D" ps -aq --filter label=unraid-trivy-scan=1)" ] && ok "stop removed all containers labelled unraid-trivy-scan=1" || bad "labelled containers left after stop"
+[ -n "$("$D" ps -q --filter name=^uts-e2e-decoy$)" ] && ok "unlabelled container from the same Trivy image survived stop" || bad "decoy was killed"
+grep -q '^running=no' <<<"$(bash "$S" status)" && [ ! -e "$UTS_RUN/pid" ] && ok "status: running=no, pid file gone" || bad "status after stop"
+[ "$(sed -n 's/^result=//p' "$UTS_DATA/report/last-run")" = stopped ] && [ "$(report '$r["generated"]')" = "$G3" ] \
+  && ok "last-run=stopped, previous report kept" || bad "after stop: $(cat "$UTS_DATA/report/last-run")"
+flock -n "$UTS_RUN/lock" true && ok "lock released after stop" || bad "lock still held"
+"$D" rm -f uts-e2e-decoy >/dev/null
+
+# ---------------------------------------------------------------- 5: update-db only, DB reused
+: >"$W/docker.log"; cfg 'JAVA_DB="no"'
+bash "$S" update-db --foreground && ok "update-db: ok" || bad "update-db"
+[ "$(runs_with 'download-db-only')" = 1 ] && [ "$(runs_with 'image-src')" = 0 ] && ok "update-db ran only the DB container, no scan" || bad "update-db containers"
+[ "$G1" -le "$(report '$r["generated"]')" ] && ok "report still readable after all runs" || bad "report"
+exit $fail
