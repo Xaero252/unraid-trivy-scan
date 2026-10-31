@@ -120,6 +120,25 @@ collapsible section, "OS packages, not CVE-matched", with a link to the Unraid r
 versions with the notes, and keep Unraid updated. A clean OS scan does **not** mean the OS has no known
 vulnerabilities.
 
+### Unraid 8 will not close this gap by itself
+
+Lime Technology announced on 2026-08-17 that Unraid 8 moves from Slackware to a Fedora base built on Universal
+Blue's uCore ([announcement](https://unraid.net/blog/unraid-8-announced)); there is no release date yet ("it'll
+ship when it's ready"). uCore is built on Fedora CoreOS, so the OS packages will be RPMs that Trivy can at least
+list. Trivy still cannot check them against CVEs, though:
+
+- Trivy's coverage page for CoreOS, which covers Fedora CoreOS, says SBOM ✓ and Vulnerability "-" (not supported)
+  ([v0.76.1 docs](https://github.com/aquasecurity/trivy/blob/v0.76.1/docs/guide/coverage/os/coreos.md)).
+- Fedora itself is not on Trivy's list of supported operating systems. The request "Support Fedora"
+  ([aquasecurity/trivy#121](https://github.com/aquasecurity/trivy/issues/121)) has been open since 2019-08-19 and
+  is labelled `help wanted`. The blocker discussed there is that Fedora publishes no structured,
+  machine-readable advisory feed like RHEL's.
+
+Two things change for this plugin on Unraid 8. The OS package inventory will have to read the RPM database instead of
+Slackware's package list. The mounted directories will have to be checked again for an image-based layout. Both are
+planned once a beta is available to test against. The Go and Node.js coverage above does not depend on the base
+distribution.
+
 What a scan of the official 7.3.4 release found (test machine, 2026-10-31, vulnerability DB of that day) is in
 [Status](#status).
 
