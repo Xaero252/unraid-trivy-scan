@@ -48,4 +48,39 @@ file_put_contents("$b/local/1.json", "{not json");
 run($agg, $b, "$w/broken.json");
 $rb = json_decode((string)file_get_contents("$w/broken.json"), true);
 t(($rb['images'][0]['scan'] ?? '') === 'failed' && ($rb['images'][0]['error'] ?? '') === 'Trivy output is not valid JSON', "invalid Trivy JSON -> image failed with reason");
+t(!array_key_exists('host', $r) || $r['host'] === null, "no OS scan -> host is null");
+t(($r['summary']['os'] ?? '') === 'off', "no OS scan -> summary.os=off");
+
+// ---- the Unraid OS as a target (tests/fixtures/os)
+$o = "$w/os.json"; @unlink($o);
+run($agg, "$repo/tests/fixtures/os", $o);
+$r = json_decode((string)@file_get_contents($o), true);
+$c = []; foreach ($r['cves'] ?? [] as $x) $c[$x['id']] = $x;
+$im = $r['images'] ?? [];
+t(count($im) === 2 && ($im[0]['kind'] ?? '') === 'image' && ($im[1]['kind'] ?? '') === 'os', "OS appended as a second target, kind=os");
+t(($im[1]['name'] ?? '') === 'Unraid OS 7.3.4' && ($im[1]['scan'] ?? '') === 'ok' && ($im[1]['update'] ?? '') === 'na', "OS target named 'Unraid OS 7.3.4', scanned, registry not applicable");
+t(($im[1]['vulns'] ?? 0) === 4, "OS target: 4 findings (same CVE at two paths counted twice)");
+t(($r['summary']['images'] ?? -1) === 1 && ($r['summary']['os'] ?? '') === 'ok' && ($r['summary']['failed'] ?? -1) === 0, "summary: 1 image, OS ok, the OS is not counted as an image");
+t(($c['CVE-2025-1000']['image_count'] ?? 0) === 2, "CVE in an image and in the OS -> 2 targets");
+$paths = array_column($c['CVE-2025-2000']['affected'] ?? [], 'path');
+t($paths === ['usr/local/unraid-api/node_modules/axios/package.json', 'usr/local/lib/node_modules/npm/node_modules/axios/package.json'],
+  "Node.js findings keep the file path of each copy (PkgPath)");
+t(($c['CVE-2025-2000']['affected'][0]['img'] ?? -1) === 1 && ($c['CVE-2025-2000']['severity'] ?? '') === 'CRITICAL', "OS finding points at the OS target");
+t(($c['CVE-2025-3000']['fix'] ?? '') === 'none', "OS finding without a fixed version -> fix=none");
+$h = $r['host'] ?? [];
+t(($h['kernel'] ?? '') === '6.18.58-Unraid' && ($h['package_count'] ?? 0) === 4, "host: kernel and 4 package entries");
+t(($h['packages'][1] ?? null) === ['docker', '29.8.2', '1_LT'] && ($h['packages'][2] ?? null) === ['kernel-firmware', '20261015_abcdef0', '1']
+  && ($h['packages'][3] ?? null) === ['oddname', '', ''], "Slackware names split into name/version/build; an odd entry kept as a name");
+// failed OS scan, hostile version and package lines
+$f = "$w/osfail"; @mkdir("$f/os", 0755, true);
+file_put_contents("$f/images.tsv", ''); file_put_contents("$f/results.tsv", '');
+file_put_contents("$f/os/result", "result=failed\nerror=timed out after 30 min (setting: Timeout per image)\nversion=7.3.4\"><script>x</script>\nkernel=6.1\n");
+file_put_contents("$f/os/packages.txt", "<img src=x onerror=alert(1)>-1-x86_64-1\n\x01\x02bad\n");
+run($agg, $f, "$w/osfail.json");
+$rf = json_decode((string)file_get_contents("$w/osfail.json"), true);
+t(($rf['images'][0]['scan'] ?? '') === 'failed' && strpos($rf['images'][0]['error'] ?? '', 'timed out') === 0 && ($rf['summary']['failed'] ?? 0) === 1
+  && ($rf['summary']['os'] ?? '') === 'failed', "failed OS scan listed with its reason and counted as failed");
+t(($rf['host']['name'] ?? '') === 'Unraid OS unknown', "an invalid version string becomes 'unknown'");
+t(($rf['host']['packages'][1][0] ?? '') === 'bad' && strpos((string)file_get_contents("$w/osfail.json"), '<img') === false,
+  "package lines: control characters stripped, markup hex-escaped in the JSON");
 exit($fail);

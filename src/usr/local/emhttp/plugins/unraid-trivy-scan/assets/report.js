@@ -13,7 +13,7 @@
   var FIX_FILTERS = [['fixable', 'With a fix (default)'], ['package', 'Package update available'],
                      ['update', 'Fixed in a newer image'], ['none', 'No fix yet'], ['all', 'All']];
   var UPDATE_LABEL = { off: 'Not checked (setting off)', skipped: 'Not checked', failed: 'Registry check failed',
-                       current: 'Image is current', newer: 'Newer image in registry', checked: 'Checked' };
+                       current: 'Image is current', newer: 'Newer image in registry', checked: 'Checked', na: 'Not applicable' };
   var IN_UPDATE = { gone: 'Fixed in newer image', present: 'Still in newer image', same: 'No newer image', '': '-' };
 
   var state = { report: null, status: null, error: '', open: {},
@@ -92,7 +92,8 @@
   var $prog = document.getElementById('uts-progress');
   var $scan = document.getElementById('uts-scan');
   var $stop = document.getElementById('uts-stop');
-  var PHASE = { pull: 'Downloading the Trivy image', db: 'Updating databases', scan: 'Scanning', registry: 'Registry check', report: 'Writing the report' };
+  var PHASE = { pull: 'Downloading the Trivy image', db: 'Updating databases', scan: 'Scanning', os: 'Scanning the Unraid OS',
+                registry: 'Registry check', report: 'Writing the report' };
   var pollTimer = null, lastGenerated = null;
 
   function renderStatus() {
@@ -162,10 +163,12 @@
         el('span', { className: 'uts-card-sub' }, 'fixable of ' + num(x.total)));
     });
     var sm = r.summary || {};
+    var osOn = str(sm.os) === 'ok' || str(sm.os) === 'failed';
     cards.push(el('div', { className: 'uts-card' }, el('span', { className: 'uts-card-label' }, 'Images scanned'),
-      el('span', { className: 'uts-card-num' }, String(num(sm.images))), el('span', { className: 'uts-card-sub' }, r.scope === 'all' ? 'running and stopped' : 'running containers')));
+      el('span', { className: 'uts-card-num' }, String(num(sm.images))),
+      el('span', { className: 'uts-card-sub' }, (r.scope === 'all' ? 'running and stopped' : 'running containers') + (str(sm.os) === 'ok' ? ', plus the Unraid OS' : ''))));
     cards.push(el('div', { className: 'uts-card' + (num(sm.failed) ? ' uts-card-fail' : '') }, el('span', { className: 'uts-card-label' }, 'Could not scan'),
-      el('span', { className: 'uts-card-num' }, String(num(sm.failed))), el('span', { className: 'uts-card-sub' }, 'image(s)')));
+      el('span', { className: 'uts-card-num' }, String(num(sm.failed))), el('span', { className: 'uts-card-sub' }, osOn ? 'image(s) or the OS' : 'image(s)')));
     return el('div', { className: 'uts-cards' }, cards);
   }
 
@@ -174,6 +177,8 @@
     if (str(r.trivy)) parts.push('Trivy ' + str(r.trivy).split('@')[0]);
     if (r.db && str(r.db.updated)) parts.push('vulnerability DB from ' + str(r.db.updated).slice(0, 16).replace('T', ' ') + ' UTC');
     parts.push('registry check ' + (r.registry ? 'on' : 'off'));
+    var sm = r.summary || {};
+    parts.push('Unraid OS scan ' + (str(sm.os) === 'ok' || str(sm.os) === 'failed' ? 'on' : 'off'));
     return el('p', { className: 'uts-meta' }, parts.join(' · '));
   }
 
@@ -185,11 +190,16 @@
     var images = Array.isArray(r.images) ? r.images : [];
     var failed = images.filter(function (im) { return im && im.scan !== 'ok'; });
     if (failed.length) out.push(el('details', { className: 'uts-notice uts-notice-error', open: true },
-      el('summary', null, failed.length + ' image(s) could not be scanned'),
+      el('summary', null, failed.length + (failed.some(isOs) ? ' target(s)' : ' image(s)') + ' could not be scanned'),
       el('ul', null, failed.map(function (im) {
         return el('li', null, el('strong', null, str(im.name)), containersText(im), ': ', str(im.error) || 'unknown error');
       }))));
     return out;
+  }
+  function isOs(im) { return !!im && im.kind === 'os'; }
+  function targetName(im) {
+    return [isOs(im) ? el('span', { className: 'uts-badge uts-os-badge' }, 'OS') : null, isOs(im) ? ' ' : null,
+            el('span', { className: 'uts-mono' }, str(im.name) || '?')];
   }
   function containersText(im) {
     var c = Array.isArray(im.containers) ? im.containers.map(str).filter(Boolean) : [];
@@ -203,7 +213,7 @@
       var upd = UPDATE_LABEL[str(im.update)] || '-';
       var note = str(im.update_note);
       return el('tr', null,
-        el('td', null, el('span', { className: 'uts-mono' }, str(im.name)), im.stale ? el('div', { className: 'uts-hint' }, 'The tag now points to a newer local image: recreate the container to use it.') : null),
+        el('td', null, targetName(im), im.stale ? el('div', { className: 'uts-hint' }, 'The tag now points to a newer local image: recreate the container to use it.') : null),
         el('td', null, (Array.isArray(im.containers) ? im.containers.map(str) : []).join(', ')),
         el('td', null, str(im.os) || '-'),
         el('td', { className: 'uts-num' }, im.scan === 'ok' ? String(num(im.vulns)) : '-'),
@@ -211,10 +221,31 @@
         el('td', null, upd, note ? el('div', { className: 'uts-hint' }, note) : null));
     });
     return el('details', { className: 'uts-images' },
-      el('summary', null, 'Scanned images (' + images.length + ')'),
+      el('summary', null, (images.some(isOs) ? 'Scanned targets (' : 'Scanned images (') + images.length + ')'),
       el('div', { className: 'uts-scroll' }, el('table', { className: 'uts-table uts-table-plain' },
         el('thead', null, el('tr', null, ['Image', 'Containers', 'OS', 'Findings', 'Scan', 'Registry'].map(function (h) { return el('th', { scope: 'col' }, h); }))),
         el('tbody', null, rows))));
+  }
+
+  /* The Unraid OS package list: Trivy has no Slackware advisory feed, so it is shown, not matched. */
+  function hostPackages(r) {
+    var h = r.host;
+    if (!h || typeof h !== 'object') return null;
+    var pk = Array.isArray(h.packages) ? h.packages.filter(Array.isArray) : [];
+    var ver = str(h.version);
+    var notes = /^[0-9]+\.[0-9]+\.[0-9]+$/.test(ver) ? 'https://docs.unraid.net/unraid-os/release-notes/' + ver + '/' : '';
+    var open = /(?:^|[#&])packages(?:&|$)/.test(location.hash);
+    return el('details', { className: 'uts-images uts-host', open: open },
+      el('summary', null, str(h.name) + ': OS packages, not CVE-matched (' + num(h.package_count) + ')'),
+      el('p', { className: 'uts-hint uts-host-note' },
+        'Unraid OS is based on Slackware, and Trivy has no Slackware advisory feed, so these packages and the kernel are ',
+        el('strong', null, 'not'), ' checked for CVEs. Check them against the Unraid release notes',
+        notes ? [' (', el('a', { href: notes, target: '_blank', rel: 'noopener noreferrer' }, 'Unraid ' + ver), ')'] : null,
+        '. The OS scan above covers what Trivy can match inside the OS: Go binaries, Node.js packages (including the Unraid API) and other language packages.'),
+      el('p', { className: 'uts-meta' }, 'Kernel ', el('span', { className: 'uts-mono' }, str(h.kernel) || '-'), ' · ' + pk.length + ' Slackware packages'),
+      el('ul', { className: 'uts-pkglist' }, pk.map(function (p) {
+        return el('li', null, el('span', { className: 'uts-mono' }, str(p[0])), ' ', el('span', { className: 'uts-mono uts-hint' }, str(p[1]) + (str(p[2]) ? '-' + str(p[2]) : '')));
+      })));
   }
 
   /* ---- filtering / sorting ---- */
@@ -233,7 +264,8 @@
       if (q) {
         var hay = [str(c.id), str(c.title)];
         (Array.isArray(c.affected) ? c.affected : []).forEach(function (a) {
-          hay.push(str(a.pkg)); var im = images[a.img]; if (im) { hay.push(str(im.name)); hay.push((im.containers || []).join(' ')); }
+          hay.push(str(a.pkg)); hay.push(str(a.path)); hay.push(str(a.target));
+          var im = images[a.img]; if (im) { hay.push(str(im.name)); hay.push((Array.isArray(im.containers) ? im.containers.map(str) : []).join(' ')); }
         });
         if (hay.join('\n').toLowerCase().indexOf(q) < 0) return false;
       }
@@ -270,7 +302,7 @@
     });
     var fixSel = el('select', { id: 'uts-fix', onchange: function (e) { f.fix = e.target.value; f.page = 1; persist(); renderTable(); } },
       FIX_FILTERS.map(function (o) { return el('option', { value: o[0], selected: f.fix === o[0] }, o[1]); }));
-    var search = el('input', { type: 'search', id: 'uts-q', placeholder: 'CVE, package, image', value: f.q,
+    var search = el('input', { type: 'search', id: 'uts-q', placeholder: 'CVE, package, image, path', value: f.q,
       oninput: function (e) { f.q = e.target.value; f.page = 1; renderTable(); } });
     var size = el('select', { id: 'uts-size', onchange: function (e) { f.size = +e.target.value; f.page = 1; persist(); renderTable(); } },
       [25, 50, 100].map(function (n) { return el('option', { value: n, selected: f.size === n }, n + ' per page'); }));
@@ -282,6 +314,7 @@
   }
 
   var COLS = [['', null], ['CVE', 'id'], ['Severity', 'severity'], ['Package', 'pkg'], ['Images', 'images'], ['Fix', 'fix'], ['Title', null]];
+  function colLabel(c) { return c[1] === 'images' && state.report && state.report.host ? 'Targets' : c[0]; }
   function head() {
     return el('thead', null, el('tr', null, COLS.map(function (c) {
       if (!c[1]) return el('th', { scope: 'col' }, c[0] ? c[0] : el('span', { className: 'uts-sr' }, 'Details'));
@@ -290,7 +323,7 @@
         el('button', { type: 'button', className: 'uts-sort', onclick: function () {
           if (state.f.sort === c[1]) state.f.dir = -state.f.dir; else { state.f.sort = c[1]; state.f.dir = (c[1] === 'id' || c[1] === 'pkg') ? 1 : -1; }
           renderTable();
-        } }, c[0], el('span', { className: 'uts-sort-ind', 'aria-hidden': 'true' }, active ? (state.f.dir > 0 ? ' ▲' : ' ▼') : '')));
+        } }, colLabel(c), el('span', { className: 'uts-sort-ind', 'aria-hidden': 'true' }, active ? (state.f.dir > 0 ? ' ▲' : ' ▼') : '')));
     })));
   }
 
@@ -302,13 +335,13 @@
     aff.forEach(function (a) { var p = str(a.pkg); if (p && pkgs.indexOf(p) < 0) pkgs.push(p); });
     var url = cveUrl(c);
     var toggle = el('button', { type: 'button', className: 'uts-toggle', 'aria-expanded': open ? 'true' : 'false', 'aria-controls': detailId,
-      title: 'Show affected images and packages', onclick: function () { state.open[id] = !state.open[id]; renderTable(); } },
+      title: 'Show affected images, packages and paths', onclick: function () { state.open[id] = !state.open[id]; renderTable(); } },
       el('span', { 'aria-hidden': 'true' }, open ? '▾' : '▸'), el('span', { className: 'uts-sr' }, 'Details for ' + id));
     var row = el('tr', { className: 'uts-row' + (open ? ' uts-open' : '') },
       el('td', { className: 'uts-tcell' }, toggle),
-      el('td', { className: 'uts-mono' }, url ? el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, id) : id),
+      el('td', { className: 'uts-mono uts-id' }, url ? el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, id) : id),
       el('td', null, sevBadge(c.severity)),
-      el('td', { className: 'uts-mono' }, pkgs[0] || '-', pkgs.length > 1 ? el('span', { className: 'uts-more' }, ' +' + (pkgs.length - 1)) : null),
+      el('td', { className: 'uts-mono uts-pkg' }, pkgs[0] || '-', pkgs.length > 1 ? el('span', { className: 'uts-more' }, ' +' + (pkgs.length - 1)) : null),
       el('td', { className: 'uts-num' }, String(num(c.image_count))),
       el('td', null, el('span', { className: 'uts-fix uts-fix-' + (FIX_LABEL[c.fix] ? c.fix : 'none') }, FIX_LABEL[c.fix] || FIX_LABEL.none)),
       el('td', { className: 'uts-title' }, str(c.title)));
@@ -316,18 +349,20 @@
     var detail = el('tr', { className: 'uts-detail', id: detailId },
       el('td', { colspan: COLS.length },
         el('table', { className: 'uts-table uts-table-plain uts-inner' },
-          el('thead', null, el('tr', null, ['Image', 'Containers', 'Package', 'Installed', 'Fixed in', 'Status', 'Newer image', 'Target'].map(function (h) { return el('th', { scope: 'col' }, h); }))),
+          el('thead', null, el('tr', null, ['Image or OS', 'Containers', 'Package', 'Installed', 'Fixed in', 'Status', 'Newer image', 'Target or file'].map(function (h) { return el('th', { scope: 'col' }, h); }))),
           el('tbody', null, aff.map(function (a) {
             var im = images[a.img] || {};
+            var where = str(a.path) || str(a.target);
+            if (isOs(im) && where && where.charAt(0) !== '/') where = '/' + where;   // rootfs paths are relative to /
             return el('tr', null,
-              el('td', { className: 'uts-mono' }, str(im.name) || '?'),
+              el('td', null, targetName(im)),
               el('td', null, (Array.isArray(im.containers) ? im.containers.map(str) : []).join(', ')),
               el('td', { className: 'uts-mono' }, str(a.pkg)),
               el('td', { className: 'uts-mono' }, str(a.installed)),
               el('td', { className: 'uts-mono' }, str(a.fixed) || '-'),
               el('td', null, str(a.status).replace(/_/g, ' ')),
               el('td', null, IN_UPDATE[str(a.update)] || '-'),
-              el('td', { className: 'uts-mono uts-hint' }, str(a.target)));
+              el('td', { className: 'uts-mono uts-hint' }, where));
           })))));
     return [row, detail];
   }
@@ -343,7 +378,7 @@
     var images = Array.isArray(r.images) ? r.images : [];
     var body;
     if (!r.cves.length) {
-      body = el('tbody', null, el('tr', null, el('td', { colspan: COLS.length, className: 'uts-empty' }, 'No vulnerabilities found in the scanned images.')));
+      body = el('tbody', null, el('tr', null, el('td', { colspan: COLS.length, className: 'uts-empty' }, 'No vulnerabilities found in the scanned ' + (r.host ? 'targets.' : 'images.'))));
     } else if (!slice.length) {
       body = el('tbody', null, el('tr', null, el('td', { colspan: COLS.length, className: 'uts-empty' },
         'No CVEs match the filters.' + (res.hiddenNoFix ? ' ' + res.hiddenNoFix + ' CVE(s) without a fix are hidden; choose "All" under Fix status to see them.' : ''))));
@@ -371,7 +406,7 @@
     }
     $table = el('table', { className: 'uts-table uts-cves' });
     $pager = el('div', { className: 'uts-pager', role: 'navigation', 'aria-label': 'Pages' });
-    var parts = [summaryCards(r), metaLine(r)].concat(notices(r), [imagesTable(r), filters(), el('div', { className: 'uts-scroll' }, $table), $pager]);
+    var parts = [summaryCards(r), metaLine(r)].concat(notices(r), [imagesTable(r), hostPackages(r), filters(), el('div', { className: 'uts-scroll' }, $table), $pager]);
     $body.replaceChildren.apply($body, parts.filter(Boolean));
     var m = /(?:^|[#&])open=([A-Za-z0-9._:-]+)/.exec(location.hash);
     if (m && !state.openedFromHash) { state.open[m[1]] = true; state.f.q = m[1]; state.f.fix = 'all'; state.openedFromHash = true;

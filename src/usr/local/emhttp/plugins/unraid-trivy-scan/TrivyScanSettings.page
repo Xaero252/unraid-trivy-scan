@@ -56,7 +56,13 @@ Apply the form to rewrite the file.</p>
   <dt><label for="uts-java">Java database</label></dt>
   <dd><select name="JAVA_DB" id="uts-java"><?=uts_options(['yes' => 'Download (about 1.5 GB on disk)', 'no' => 'Do not download'], $uts['JAVA_DB'])?></select></dd>
 </dl>
-<blockquote class="inline_help">The scanner that reads your local images runs without network access, so it can only use databases downloaded beforehand. Without the Java database, images that contain Java packages (jar files) are listed under "Could not scan". An image that takes longer than the timeout is stopped and listed with the reason.</blockquote>
+<dl>
+  <dt><label for="uts-os">Scan the Unraid OS</label></dt>
+  <dd><select name="OS_SCAN" id="uts-os"><?=uts_options(['yes' => 'Yes', 'no' => 'No'], $uts['OS_SCAN'])?></select></dd>
+</dl>
+<blockquote class="inline_help">Scans the operating system itself with <code>trivy rootfs</code>, in its own container without network access and without the Docker socket. Only /usr, /lib, /lib64, /bin, /sbin and /opt are given to it, read-only and without anything mounted below them; /mnt (array and pools), /boot, /etc, /proc, /sys and /var/lib/docker are never mounted. <strong>What it finds:</strong> Go programs (Docker, containerd, runc, rclone, ...), Node.js packages (including the Unraid API) and other language packages inside the OS. <strong>What it cannot check:</strong> Unraid is based on Slackware and Trivy has no Slackware advisory data, so the OS packages and the kernel are not matched against CVEs; the report lists them with their versions so you can compare them with the Unraid release notes.</blockquote>
+
+<blockquote class="inline_help">The scanner that reads your local images runs without network access, so it can only use databases downloaded beforehand. Without the Java database, images that contain Java packages (jar files) are listed under "Could not scan". An image, or the OS scan, that takes longer than the timeout is stopped and listed with the reason.</blockquote>
 
 <h3 class="uts-h">Registry check</h3>
 <dl>

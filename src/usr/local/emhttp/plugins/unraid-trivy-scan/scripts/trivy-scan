@@ -1,5 +1,5 @@
 #!/bin/bash
-# trivy-scan - scan the images of Docker containers with a pinned Trivy image (unraid-trivy-scan plugin).
+# trivy-scan - scan the images of Docker containers, and the Unraid OS, with a pinned Trivy image (unraid-trivy-scan plugin).
 #
 # Commands:
 #   start       start a scan in the background (returns at once)
@@ -17,6 +17,10 @@
 #   local   Docker socket (needed to read local images), --network none, DB mounted read-only
 #   remote  network, NO Docker socket, DB read-only; only with the registry check; the only one that may
 #           receive /root/.docker/config.json (setting "Use registry logins")
+#   os      --network none, NO Docker socket, DB read-only: "trivy rootfs" over the Unraid OS system directories
+#           (OS_DIRS), each bind-mounted read-only and NON-recursively under /rootfs, so nothing mounted below them
+#           (array, pools, /lib/firmware, libvirt image, ...) is visible. /mnt, /boot, /proc, /sys, /etc and
+#           /var/lib/docker are never mounted.
 # The socket is NOT a sandbox boundary: whoever holds it can ask Docker for anything. --network none, the
 # read-only DB mount, --cap-drop ALL and no-new-privileges only narrow what a compromised scanner can do directly.
 set -uo pipefail
@@ -41,6 +45,8 @@ REG_AUTH=${UTS_REG_AUTH:-/root/.docker/config.json}
 NOTIFY_BIN=${UTS_NOTIFY:-/usr/local/emhttp/webGui/scripts/notify}
 UPDATE_CRON=${UTS_UPDATE_CRON:-/usr/local/sbin/update_cron}
 PHP=${UTS_PHP:-php}
+OS_ROOT=${UTS_OS_ROOT:-}              # tests: a local copy of an Unraid root filesystem instead of /
+OS_KERNEL=${UTS_OS_KERNEL:-}          # tests: kernel version of that copy (default: uname -r)
 PS_FILTER=${UTS_PS_FILTER:-}          # tests: restrict the container list (docker ps --filter value)
 TRIVY_TIMEOUT_OVERRIDE=${UTS_TRIVY_TIMEOUT:-}   # tests: Trivy --timeout value (e.g. 1ms) to simulate a timeout
 LABEL=$NAME
@@ -48,7 +54,7 @@ SELF=$(readlink -f "$0")
 
 # ---------------------------------------------------------------- settings (data, never executed)
 declare -A DEF=([SCHEDULE]="" [SCOPE]=running [TIMEOUT]=30 [JAVA_DB]=yes [REGISTRY_CHECK]=no [REGISTRY_AUTH]=no
-                [NOTIFY]=yes [SHOW_TAB]=no [DASH_TILE]=yes [REMOVE_DATA]=no)
+                [NOTIFY]=yes [OS_SCAN]=yes [SHOW_TAB]=no [DASH_TILE]=yes [REMOVE_DATA]=no)
 declare -A C
 CFG_PROBLEMS=()
 
@@ -82,7 +88,7 @@ valid_value() {   # valid_value <key> <value>
     SCHEDULE) [ -z "$2" ] || cron_valid "$2" ;;
     SCOPE)    [ "$2" = running ] || [ "$2" = all ] ;;
     TIMEOUT)  [[ $2 =~ ^[0-9]{1,3}$ ]] && [ $((10#$2)) -ge 5 ] && [ $((10#$2)) -le 240 ] ;;
-    JAVA_DB|REGISTRY_CHECK|REGISTRY_AUTH|NOTIFY|SHOW_TAB|DASH_TILE|REMOVE_DATA) [ "$2" = yes ] || [ "$2" = no ] ;;
+    JAVA_DB|REGISTRY_CHECK|REGISTRY_AUTH|NOTIFY|OS_SCAN|SHOW_TAB|DASH_TILE|REMOVE_DATA) [ "$2" = yes ] || [ "$2" = no ] ;;
     *) return 1 ;;
   esac
 }
@@ -247,6 +253,52 @@ read_row() {
   IFS=$'\x1f' read -r idx id disp ref stale dig cont noref <<<"${line//$'\t'/$'\x1f'}"
 }
 
+# ---------------------------------------------------------------- the Unraid OS
+# System directories given to the OS scanner. Unraid 7.x runs from RAM: bzroot is the root filesystem, /usr is an
+# overlay on the bzmodules squashfs, /lib/firmware an overlay on bzfirmware. Only these are mounted, each read-only
+# and non-recursive (bind-recursive=disabled: mounts below them are left out); a missing directory or a symlink is
+# skipped. Not mounted: /etc (configuration and secrets; Trivy finds nothing there that it can match) and
+# /var/lib/pkgtools (Trivy has no Slackware support; the package list is read here, on the host, for the report).
+OS_DIRS=(usr lib lib64 bin sbin opt)
+OS_SKIP=(/rootfs/lib/modules)          # kernel modules: nothing Trivy can match
+
+os_version() {   # Unraid version from /etc/unraid-version (version="7.3.4"), or "unknown"
+  local v
+  v=$(sed -n 's/^version="\([0-9A-Za-z.+_-]\{1,40\}\)"[[:space:]]*$/\1/p' "$OS_ROOT/etc/unraid-version" 2>/dev/null | head -n1)
+  echo "${v:-unknown}"
+}
+
+scan_os() {   # writes $WORK/os/{result,packages.txt,os.json,os.err}; needs $RUN_ID, $HARD_LIMIT, $tt
+  local d src mounts=() ver kernel
+  mkdir -p "$WORK/os"
+  ver=$(os_version)
+  kernel=$(clean "${OS_KERNEL:-$(uname -r)}" 60)
+  find "$OS_ROOT/var/lib/pkgtools/packages" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | LC_ALL=C sort | head -n 3000 \
+    >"$WORK/os/packages.txt"
+  for d in "${OS_DIRS[@]}"; do
+    src="$OS_ROOT/$d"
+    [ -d "$src" ] && [ ! -L "$src" ] || continue
+    mounts+=(--mount "type=bind,source=$src,target=/rootfs/$d,readonly,bind-recursive=disabled")
+  done
+  progress os "$done" "$total" "Unraid OS $ver"
+  OUT_FILE=$WORK/os/os.json; ERR_FILE=$WORK/os/os.err
+  local res=failed why=''
+  if [ ${#mounts[@]} -eq 0 ]; then
+    why="none of the system directories (${OS_DIRS[*]}) found"
+  elif trivy_container os "$NAME-$RUN_ID-os" --network none "${mounts[@]}" -v "$DATA/cache:/cache:ro" -- \
+         rootfs "${TRIVY_COMMON[@]}" --cache-backend memory --skip-db-update --skip-java-db-update --offline-scan \
+         --scanners vuln --format json --quiet --skip-dirs "$(IFS=,; echo "${OS_SKIP[*]}")" --timeout "$tt" /rootfs \
+       && [ "$(head -c1 "$OUT_FILE")" = '{' ]; then
+    res=ok
+  else
+    why=$(fail_reason)
+  fi
+  [ "$res" = ok ] || log "FAILED Unraid OS scan: $why"
+  kv_write "$WORK/os/result" "result=$res" "error=$why" "version=$ver" "kernel=$kernel"
+  done=$((done + 1))
+  [ "$res" = ok ]
+}
+
 # ---------------------------------------------------------------- the scan
 on_signal() {
   log "stop requested"
@@ -291,7 +343,7 @@ do_run() {
   trap on_signal TERM INT HUP
   trap on_exit EXIT
   load_config
-  log "scan $RUN_ID started (scope=${C[SCOPE]} registry=${C[REGISTRY_CHECK]} timeout=${C[TIMEOUT]}m)"
+  log "scan $RUN_ID started (scope=${C[SCOPE]} registry=${C[REGISTRY_CHECK]} os=${C[OS_SCAN]} timeout=${C[TIMEOUT]}m)"
   [ ${#CFG_PROBLEMS[@]} -gt 0 ] && warn "invalid settings ignored, defaults used: ${CFG_PROBLEMS[*]}"
   preflight
   if ! update_db; then
@@ -318,6 +370,7 @@ do_run() {
   done
   total=$n
   [ "${C[REGISTRY_CHECK]}" = yes ] && total=$((n + refs))
+  [ "${C[OS_SCAN]}" = yes ] && total=$((total + 1))
   log "$n image(s) to scan"
 
   HARD_LIMIT=$((C[TIMEOUT] * 60 + 120))
@@ -338,6 +391,9 @@ do_run() {
     fi
     done=$((done + 1))
   done <"$WORK/images.tsv"
+
+  local osfail=0
+  if [ "${C[OS_SCAN]}" = yes ]; then scan_os || osfail=1; fi
 
   if [ "${C[REGISTRY_CHECK]}" = yes ]; then
     local auth=()
@@ -367,11 +423,12 @@ do_run() {
   if ! out=$("$PHP" "$PLUGIN_DIR/include/aggregate.php" "$WORK" "$DATA/report/report.json" \
         "scope=${C[SCOPE]}" "registry=${C[REGISTRY_CHECK]}" "trivy=${TRIVY_IMAGE#*:}" "cache=$DATA/cache" 2>&1 9>&-); then last_run failed "building the report failed"; log "aggregate: $out"; exit 1; fi
   new=$(sed -n 's/^new_fixable_critical=\([0-9]*\)$/\1/p' <<<"$out")
-  local nf; nf=$(grep -c $'\tlocal\tfailed\t' "$WORK/results.tsv")
-  last_run ok "$n image(s) scanned, $nf failed"
-  log "scan $RUN_ID finished: $n image(s), $nf failed, new fixable critical: ${new:-0}"
+  local nf what="$n image(s)"; nf=$(grep -c $'\tlocal\tfailed\t' "$WORK/results.tsv")
+  if [ "${C[OS_SCAN]}" = yes ]; then what="$n image(s) and the Unraid OS"; nf=$((nf + osfail)); fi
+  last_run ok "$what scanned, $nf failed"
+  log "scan $RUN_ID finished: $what, $nf failed, new fixable critical: ${new:-0}"
   if [ "${C[NOTIFY]}" = yes ] && [ "${new:-0}" -gt 0 ] && [ -x "$NOTIFY_BIN" ]; then
-    "$NOTIFY_BIN" -e "Trivy image scan" -s "Container images: $new new fixable critical vulnerabilities" \
+    "$NOTIFY_BIN" -e "Trivy scan" -s "Trivy scan: $new new fixable critical vulnerabilities" \
       -d "$new critical CVE(s) with a fix available appeared since the last scan. See Settings, Trivy Scan." \
       -i alert -l "/Settings/TrivyScan" >/dev/null 2>&1 9>&-
   fi

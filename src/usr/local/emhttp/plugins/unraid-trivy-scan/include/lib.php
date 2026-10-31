@@ -14,6 +14,7 @@ const UTS_DEFAULTS = [
   'REGISTRY_CHECK' => 'no',      // compare with the image in the registry
   'REGISTRY_AUTH'  => 'no',      // give /root/.docker/config.json to the registry container
   'NOTIFY'         => 'yes',     // notify on new fixable critical CVEs
+  'OS_SCAN'        => 'yes',     // also scan the Unraid OS (trivy rootfs over the system directories, read-only)
   'SHOW_TAB'       => 'no',      // top-level header tab
   'DASH_TILE'      => 'yes',     // dashboard tile
   'REMOVE_DATA'    => 'no',      // on plugin removal delete the data dir and the pinned image

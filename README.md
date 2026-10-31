@@ -1,21 +1,27 @@
 # Trivy Scan for Unraid
 
-An Unraid plugin that scans the images of your Docker containers for known vulnerabilities with
-[Trivy](https://github.com/aquasecurity/trivy), and shows the result as one row per CVE: which images and
-packages are affected, whether a package update or a newer image fixes it, and which images could not be scanned
-and why.
+An Unraid plugin that scans the images of your Docker containers, and the Unraid OS itself, for known
+vulnerabilities with [Trivy](https://github.com/aquasecurity/trivy), and shows the result as one row per CVE: which
+images (or OS files) and packages are affected, whether a package update or a newer image fixes it, and which
+targets could not be scanned and why. For the OS, read [what the OS scan covers](#what-the-os-scan-covers) first:
+Trivy cannot check Unraid's own Slackware packages.
 
 | Report (light theme) | Report, one CVE expanded (dark theme) |
 |---|---|
 | ![Report, light theme](docs/screenshots/report-light.png) | ![Expanded CVE row, dark theme](docs/screenshots/report-expanded-dark.png) |
 
-| Settings (dark theme) | Dashboard tile |
+| Unraid OS finding and the OS package list (dark theme) | Settings (dark theme) |
 |---|---|
-| ![Settings, dark theme](docs/screenshots/settings-dark.png) | ![Dashboard tile](docs/screenshots/tile-light.png) |
+| ![Unraid OS target, dark theme](docs/screenshots/report-os-dark.png) | ![Settings, dark theme](docs/screenshots/settings-dark.png) |
+
+| Dashboard tile |
+|---|
+| ![Dashboard tile](docs/screenshots/tile-light.png) |
 
 The screenshots come from the local render harness (`tests/render/`) with Unraid's own stylesheets, showing a real
-scan of three small, deliberately old public images (`nginx:1.19-alpine`, `alpine:3.19.1`, `alpine:3.10`) made by
-the end-to-end test. They are not from a real Unraid server; see [Status](#status).
+scan made by the end-to-end test: three small, deliberately old public images (`nginx:1.19-alpine`,
+`alpine:3.19.1`, `alpine:3.10`) and the root filesystem of the official Unraid 7.3.4 release, extracted on the test
+machine. They are not from a real Unraid server; see [Status](#status).
 
 ## Install
 
@@ -42,8 +48,12 @@ disk), plus about 1.5 GB for the Java database unless you turn that off. They ar
   your server. The reference is in one place, `TRIVY_IMAGE` in `scripts/trivy-scan`.
 - Optional registry check: scans the image each container's tag points to in its registry today and marks the CVEs
   a newer image no longer has ("Fixed in a newer image").
-- Per-image timeout. An image that fails (timeout, unsupported content, missing Java database, ...) is listed
-  with the reason instead of silently missing from the report.
+- Optional scan of the Unraid OS itself (on by default): the Go programs, Node.js packages (including the Unraid
+  API) and other language packages inside the OS appear as one more target, "Unraid OS 7.x.y", with the file path
+  of each affected package. The OS's Slackware packages and the kernel are listed separately, because Trivy cannot
+  match them; see [what the OS scan covers](#what-the-os-scan-covers).
+- Per-target timeout. An image or OS scan that fails (timeout, unsupported content, missing Java database, ...) is
+  listed with the reason instead of silently missing from the report.
 - Report: one row per CVE, expandable to the affected images, containers, packages, installed and fixed versions;
   filters for severity and fix status (CVEs without any fix are hidden by default, with a count), search, sortable
   columns, paging. Every value is put into the page as text, escaped exactly once.
@@ -62,6 +72,16 @@ disk), plus about 1.5 GB for the Java database unless you turn that off. They ar
 | Database download | yes | **no** | read-write | no |
 | Local image scan | **none** (`--network none`) | yes, needed to read local images | read-only | **never** |
 | Registry check (optional) | yes | **no** | read-only | only with "Use registry logins" |
+| Unraid OS scan (optional, on by default) | **none** (`--network none`) | **no** | read-only | **never** |
+
+The OS scan runs `trivy rootfs /rootfs`. It gets only `/usr`, `/lib`, `/lib64`, `/bin`, `/sbin` and `/opt` (when it
+exists and is not a symlink), each mounted read-only under `/rootfs` with `bind-recursive=disabled`, so anything
+mounted *below* them is not visible (on Unraid 7.x, `/usr` is itself an overlay on the `bzmodules` squashfs and is
+included; `/lib/firmware`, a separate overlay, is not). `/lib/modules` is skipped. `/mnt` (array, pools, user
+shares), `/boot`, `/etc`, `/proc`, `/sys`, `/var/lib/docker` and everything else are never mounted. `/etc` is left
+out on purpose: it holds configuration and secrets, and a test scan with and without it gave the same findings.
+`bind-recursive` needs Docker 25 or later; Unraid 7.0 ships Docker 27.0.3. The Slackware package list is read on the
+host by the script, from `/var/lib/pkgtools/packages` (file names only), and the version from `/etc/unraid-version`.
 
 Be clear about what this buys: whoever holds the Docker socket can ask Docker for anything, including a new
 container that does have a network. Separating the roles keeps the scanner that holds the socket away from the
@@ -77,6 +97,32 @@ URLs. The report page draws everything with `textContent`.
 Stop (button, upgrade or removal) only touches containers carrying this plugin's label; other Trivy containers on
 the server are left alone.
 
+## What the OS scan covers
+
+Unraid OS is based on Slackware. Trivy (checked in the v0.76.1 source and docs, 2026-10-31) has **no Slackware
+support**: its OS list is Alpine, Wolfi, Chainguard, MinimOS, RHEL, CentOS, AlmaLinux, Rocky, Oracle, Azure Linux,
+Amazon Linux, openSUSE/SLES, Photon, CoreOS, Echo, Debian, Ubuntu and Bottlerocket, and its OS package analyzers are
+apk, dpkg, rpm and Bottlerocket only. In a test run that included Unraid's `/etc/os-release` (`ID=unraid-os`,
+`ID_LIKE=slackware`), Trivy detected no OS at all, and the findings were the same as without `/etc`.
+
+| | Checked against CVEs? |
+|---|---|
+| Go binaries in the OS (embedded module list and Go version), e.g. `docker`, `dockerd`, `containerd`, `ctr`, `runc`, `docker-proxy`, `docker-buildx`, `rclone` | **yes** |
+| Node.js packages (`package.json` in `node_modules`), e.g. the Unraid API in `/usr/local/unraid-api` and the bundled npm | **yes** |
+| Other installed language packages Trivy reads in rootfs mode: Python wheels/eggs, PHP Composer `installed.json`, Ruby gemspecs, Java jars, .NET, Rust (`Cargo.lock`, cargo-auditable binaries), Julia | **yes**, where present (Unraid 7.3.4 has none of these that Trivy reports) |
+| Files installed by plugins under `/usr` or `/opt` (Go binaries, `node_modules`, ...) | **yes**, same rules |
+| The Slackware packages (`bash`, `openssl`, `openssh`, `samba`, `nginx`, `php`, `qemu`, `glibc`, ... about 370 in 7.3.4) | **no** |
+| The Linux kernel | **no** |
+| C/C++ programs and libraries outside a package manager Trivy knows | **no** |
+
+The report therefore shows the Slackware package list (name, version, build) and the kernel version in a
+collapsible section, "OS packages, not CVE-matched", with a link to the Unraid release notes: compare those
+versions with the notes, and keep Unraid updated. A clean OS scan does **not** mean the OS has no known
+vulnerabilities.
+
+What a scan of the official 7.3.4 release found (test machine, 2026-10-31, vulnerability DB of that day) is in
+[Status](#status).
+
 ## Settings
 
 Stored on the flash drive in `/boot/config/plugins/unraid-trivy-scan/unraid-trivy-scan.cfg` as plain
@@ -88,11 +134,12 @@ value is checked when the form is saved (the save is refused if anything is inva
 |---|---|---|
 | `SCHEDULE` | empty (no schedule) or a 5-field cron expression, digits and `* , - /` only, range-checked | empty |
 | `SCOPE` | `running`, `all` | `running` |
-| `TIMEOUT` | minutes per image, 5 to 240 | `30` |
+| `TIMEOUT` | minutes per image (and for the OS scan), 5 to 240 | `30` |
 | `JAVA_DB` | `yes`, `no` | `yes` |
 | `REGISTRY_CHECK` | `yes`, `no` | `no` |
 | `REGISTRY_AUTH` | `yes`, `no` (mount `/root/.docker/config.json` read-only into the registry-check container) | `no` |
 | `NOTIFY` | `yes`, `no` | `yes` |
+| `OS_SCAN` | `yes`, `no` (also scan the Unraid OS, see above) | `yes` |
 | `SHOW_TAB` | `yes`, `no` | `no` |
 | `DASH_TILE` | `yes`, `no` | `yes` |
 | `REMOVE_DATA` | `yes`, `no` (on removal, delete the data directory and the pinned Trivy image) | `no` |
@@ -140,17 +187,33 @@ Version scheme: `YYYY.MM.DD` plus an optional letter; bump `&version;` in the .p
   stopped scope, scan by image ID, registry check with an outdated tag, the container roles (from a logging docker
   shim), a simulated per-image timeout, stop scoped to the plugin's label (an unlabelled container from the same
   Trivy image survives), the lock, `update-db`. It removes the containers and images it added.
+  The Unraid OS scan runs against a local copy of an official release: `tests/unraid-os.sh` downloads the release
+  zip from Lime Tech's release server (version, URL and SHA-256 pinned in the script), checks it and the per-file
+  `.sha256`, and extracts `bzroot` and `bzmodules` (the `/usr` squashfs) into `tests/.work/unraid-os/root`
+  (about 2.7 GB). Checked: mounts and container role, findings with file paths, the package inventory, a simulated
+  OS-scan timeout.
 
 ## Status
 
 Tested on a Linux workstation only: unit, render and end-to-end tests pass there (Docker 29 with the containerd
 image store). **Not yet tested on a real Unraid server.** Still to check there: the webGUI integration (tabs,
 Settings form through `update.php`, CSRF handling, the dashboard tile and header tab), `update_cron` and `notify`,
-and Unraid's Docker image store.
+Unraid's Docker image store, and the OS scan on a running server (it was tested on the extracted 7.3.4 release
+files, owned by the test user, not on a live root filesystem with plugins installed).
+
+OS scan of the official Unraid 7.3.4 release files (2026-10-31, Trivy 0.76.1, vulnerability DB of that day):
+227 distinct CVEs in 476 findings across 40 files: 8 critical, 107 high, 91 medium, 17 low, 4 unknown; all but 5
+have a fixed version upstream. By file: `/usr/bin/rclone` 119 CVEs, the Unraid API's `node_modules` 68, the bundled
+npm (`/usr/local/lib/node_modules/npm`) 39, `containerd` 36, `ctr` 28, `containerd-shim-runc-v2` 22,
+`docker-buildx` 22, `dockerd` 19, `runc` 19, `docker-proxy` 16, `docker` 14. The critical ones are in rclone
+(v1.72.0: rclone's own CVEs, gRPC, and the Go 1.25.4 standard library it was built with) and node-tar inside the
+bundled npm. A finding means the installed version is in an affected range, not that it can be exploited on your
+server: several of the rclone CVEs, by their own titles, need rclone's remote-control server to be enabled. Fixing
+them is up to Lime Tech (a newer Unraid release), not something to patch by hand.
 
 ## Thanks
 
-Thanks to xaero for the original trivy-scan plugin idea on the Unraid forums.
+Thanks to Xaero for the original trivy-scan plugin on the Unraid forums, which this one is built on.
 
 ## License
 

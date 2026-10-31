@@ -70,7 +70,8 @@ grep -q 'PATH' <<<"$RAW" && bad "settings shows the unknown PATH key" || ok "set
 RAW=$(curl -s "$B/Dashboard"); no_payload "dashboard raw HTML" "$RAW"; check_text "dashboard raw HTML" "$RAW" lastrun
 grep -q 'Scanning: 1 of 2' <<<"$RAW" && ok "dashboard shows scan progress" || bad "dashboard progress"
 DOM=$(dom "$B/?tab=1#open=CVE-2024-0101"); no_payload "report DOM (row expanded)" "$DOM"
-check_text "report DOM" "$DOM" title1 pkg1 target image cont reason failedimg warn current regfail os
+check_text "report DOM" "$DOM" title1 pkg1 target image cont reason failedimg warn current regfail os ospath kernel ospkg
+grep -q 'Unraid OS 7.3.4: OS packages, not CVE-matched (2)' <<<"$DOM" && ok "report: OS package list shown, labelled not CVE-matched" || bad "report: OS package list" 
 grep -q 'https://nvd.nist.gov/vuln/detail/CVE-2024-0100' <<<"$(dom "$B/?tab=1#open=CVE-2024-0100")" \
   && ok "report: javascript: advisory URL replaced by the NVD link" || bad "report: CVE-2024-0100 link"
 grep -q 'x.test' <<<"$DOM" && bad "report: URL with a quote was kept" || ok "report: advisory URL with a quote dropped"
@@ -102,7 +103,7 @@ for theme in white black; do
   if [ -n "${DEMO_REPORT:-}" ]; then cp "$DEMO_REPORT" "$D/data/report/report.json"
   else php "$P/include/aggregate.php" "$HERE/tests/fixtures/basic" "$D/data/report/report.json" registry=yes "trivy=0.76.1@sha256:x" >/dev/null; fi
   printf 'result=ok\nended=%s\nmessage=%s\n' "$(php -r 'echo json_decode(file_get_contents($argv[1]),true)["generated"];' "$D/data/report/report.json")" \
-    "$(php -r '$r=json_decode(file_get_contents($argv[1]),true); echo $r["summary"]["images"]," image(s) scanned, ",$r["summary"]["failed"]," failed";' "$D/data/report/report.json")" \
+    "$(php -r '$r=json_decode(file_get_contents($argv[1]),true); echo $r["summary"]["images"]," image(s)",($r["summary"]["os"]??"off")!=="off"?" and the Unraid OS":""," scanned, ",$r["summary"]["failed"]," failed";' "$D/data/report/report.json")" \
     >"$D/data/report/last-run"
   printf 'SCHEDULE="30 3 * * 0"\nSCOPE="running"\nREGISTRY_CHECK="yes"\n' >"$D/cfg"
   scenario "demo-$theme" "$port" "$theme"; wait_up "$port" || bad "demo harness $theme"
@@ -111,7 +112,12 @@ for theme in white black; do
   OPEN=$(php -r '$r=json_decode(file_get_contents($argv[1]),true); foreach ($r["cves"] as $c) if ($c["fix"]!=="none") { echo $c["id"]; break; }' "$D/data/report/report.json")
   shot "$U/?tab=1" 1400,1500 "$SHOTS/report-$label.png" && ok "screenshot report-$label.png" || bad "screenshot report $label"
   shot "$U/?tab=1#open=$OPEN" 1400,1000 "$SHOTS/report-expanded-$label.png" && ok "screenshot report-expanded-$label.png ($OPEN)" || bad "screenshot expanded $label"
-  shot "$U/?tab=2" 1400,1400 "$SHOTS/settings-$label.png" && ok "screenshot settings-$label.png" || bad "screenshot settings $label"
+  OSOPEN=$(php -r '$r=json_decode(file_get_contents($argv[1]),true); $os=null; foreach ($r["images"] as $i=>$im) if (($im["kind"]??"")==="os") $os=$i;
+    if ($os!==null) foreach ($r["cves"] as $c) foreach ($c["affected"] as $a) if ($a["img"]===$os && $c["fix"]!=="none") { echo $c["id"]; exit; }' "$D/data/report/report.json")
+  if [ -n "$OSOPEN" ]; then
+    shot "$U/?tab=1#open=$OSOPEN&packages" 1400,1700 "$SHOTS/report-os-$label.png" && ok "screenshot report-os-$label.png ($OSOPEN, OS package list open)" || bad "screenshot os $label"
+  else echo "note: the demo report has no Unraid OS findings, no report-os-$label.png"; fi
+  shot "$U/?tab=2" 1400,1700 "$SHOTS/settings-$label.png" && ok "screenshot settings-$label.png" || bad "screenshot settings $label"
   shot "$U/Dashboard" 560,330 "$SHOTS/tile-$label.png" && ok "screenshot tile-$label.png" || bad "screenshot tile $label"
   DOM=$(dom "$U/?tab=1"); grep -q 'uts-cves' <<<"$DOM" && grep -q 'class="uts-row' <<<"$DOM" && ok "demo report renders rows ($theme)" || bad "demo report rows ($theme)"
 done

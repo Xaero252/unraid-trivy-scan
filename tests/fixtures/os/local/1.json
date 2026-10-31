@@ -1,0 +1,5 @@
+{"SchemaVersion": 2, "ArtifactType": "container_image",
+ "Metadata": {"OS": {"Family": "alpine", "Name": "3.19.0"}},
+ "Results": [{"Target": "usr/local/bin/app", "Class": "lang-pkgs", "Type": "gobinary", "Vulnerabilities": [
+   {"VulnerabilityID": "CVE-2025-1000", "PkgName": "stdlib", "InstalledVersion": "v1.24.1", "FixedVersion": "1.24.6",
+    "Status": "fixed", "Severity": "HIGH", "Title": "net/http: example"}]}]}

@@ -2,14 +2,14 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name      "unraid-trivy-scan">
   <!ENTITY author    "unraid-trivy-scan project">
-  <!ENTITY version   "2026.10.27">
+  <!ENTITY version   "2026.10.31">
   <!ENTITY gitURL    "https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main">
   <!ENTITY pluginURL "&gitURL;/&name;.plg">
   <!ENTITY pkg       "&name;-&version;-x86_64-1.txz">
   <!ENTITY pkgURL    "&gitURL;/packages/&pkg;">
-  <!ENTITY md5       "66d8493f5be054d1d470362494fe671f">
+  <!ENTITY md5       "3e5ac418450d7aa63734e3a2e0262ca3">
 ]>
-<!-- Vulnerability scan of Docker container images with a pinned Trivy release.
+<!-- Vulnerability scan of Docker container images, and of the Unraid OS, with a pinned Trivy release.
      Install: Plugins, Install Plugin, https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main/unraid-trivy-scan.plg
      The package is downloaded from packages/ in the same repository and MD5-checked.
      Bump &version; on EVERY change (YYYY.MM.DD plus an optional letter); build.sh fills in &md5;.
@@ -19,6 +19,11 @@
         launch="Settings/TrivyScan" pluginURL="&pluginURL;" support="https://github.com/luuvasara/unraid-trivy-scan/issues">
 
 <CHANGES>
+###2026.10.31
+- New: scan the Unraid OS itself (setting "Scan the Unraid OS", on by default). trivy rootfs runs in its own container with --network none, no Docker socket and a read-only database; only /usr, /lib, /lib64, /bin, /sbin and /opt are mounted, read-only and without the mounts below them. /mnt, /boot, /etc, /proc, /sys and /var/lib/docker are never mounted.
+- The OS findings (Go binaries such as Docker, containerd, runc and rclone; Node.js packages including the Unraid API; other language packages) appear in the report as the target "Unraid OS" plus its version (for example "Unraid OS 7.3.4"), with the file path of each affected package.
+- Trivy has no Slackware support, so the OS packages and the kernel are not CVE-matched. The report lists them (package, version, build, kernel version) in a collapsible section, with a link to the release notes.
+- Per-target timeout and failure reason also for the OS scan. Notification subject no longer says "Container images" only.
 ###2026.10.27
 - First release.
 - Scans the images of running containers (optionally also stopped ones) by image ID with Trivy 0.76.1, pinned by version and digest.

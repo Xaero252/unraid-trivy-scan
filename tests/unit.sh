@@ -15,6 +15,7 @@ cat >"$W/bin/docker" <<EOF
 #!/bin/sh
 echo "docker \$*" >>"$W/docker.log"
 case "\$1" in ps) exit 0 ;; info) exit 0 ;; esac
+case " \$* " in *" rootfs "*) [ -n "\${FAKE_OS_FAIL:-}" ] && { echo "FATAL fake failure" >&2; exit 1; }; echo '{"SchemaVersion":2,"Results":[]}' ;; esac
 exit 0
 EOF
 chmod 755 "$W/bin/docker"
@@ -64,6 +65,7 @@ OUT=$(UTS_CFG=$W/h.cfg bash "$S" config)
 want='DASH_TILE=yes
 JAVA_DB=yes
 NOTIFY=no
+OS_SCAN=yes
 REGISTRY_AUTH=no
 REGISTRY_CHECK=yes
 REMOVE_DATA=no
@@ -136,6 +138,48 @@ mkdir -p "$W/d4/unraid-trivy-scan"; : >"$W/docker.log"; printf 'REMOVE_DATA="no"
 UTS_CFG=$W/u.cfg UTS_DATA=$W/d4/unraid-trivy-scan UTS_RUN=$W/run bash "$S" uninstall >/dev/null
 [ -d "$W/d4/unraid-trivy-scan" ] && ! grep -q rmi "$W/docker.log" && ok "uninstall REMOVE_DATA=no keeps data and image" || bad "uninstall no"
 grep -q 'docker rm -f\|docker ps -aq --filter label=unraid-trivy-scan=1' "$W/docker.log" && ok "uninstall stops only containers labelled unraid-trivy-scan=1" || bad "uninstall label filter: $(cat "$W/docker.log")"
+
+# ---------------------------------------------------------------- OS scan: what the OS container gets
+# A fake Unraid root with the system dirs, the dirs that must never be mounted, a symlinked /opt pointing at /mnt and
+# a hostile unraid-version. `run` goes through the real script and the real aggregator; only docker is fake.
+OR=$W/osroot
+mkdir -p "$OR"/usr/bin "$OR"/lib/modules "$OR"/lib64 "$OR"/bin "$OR"/sbin "$OR"/mnt/user "$OR"/boot "$OR"/proc "$OR"/sys \
+         "$OR"/etc "$OR"/var/lib/docker "$OR"/var/lib/pkgtools/packages "$W/osdata/unraid-trivy-scan/cache/db" "$W/osrun"
+ln -sfn "$OR/mnt" "$OR/opt"
+touch "$OR/var/lib/pkgtools/packages/bash-5.3.003-x86_64-1" "$OR/var/lib/pkgtools/packages/docker-29.8.2-x86_64-1_LT"
+echo x >"$W/osdata/unraid-trivy-scan/cache/db/trivy.db"
+osrun() {   # osrun <cfg lines...>: one offline `run` with the fake docker and the fake root
+  printf '%s\n' "$@" >"$W/os.cfg"; : >"$W/docker.log"
+  UTS_CFG=$W/os.cfg UTS_DATA=$W/osdata/unraid-trivy-scan UTS_RUN=$W/osrun UTS_LOG=$W/os.log UTS_OS_ROOT=$OR \
+    UTS_OS_KERNEL=6.18.58-Unraid UTS_PLUGIN_DIR=$P UTS_NOTIFY=$W/none UTS_CRON_FILE=$W/os.cron bash "$S" run
+}
+printf 'version="7.3.4"\n' >"$OR/etc/unraid-version"
+osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' && ok "run with OS_SCAN=yes (fake docker) exits 0" || bad "OS run rc=$?: $(tail -3 "$W/os.log")"
+OSL=$(grep -- '--label unraid-trivy-scan.role=os' "$W/docker.log")
+[ "$(grep -c . <<<"$OSL")" = 1 ] && ok "one OS scanner container" || bad "OS containers: $OSL"
+grep -q -- '--cap-drop ALL --security-opt no-new-privileges --network none' <<<"$OSL" && ok "OS container: --cap-drop ALL, no-new-privileges, --network none" || bad "OS hardening: $OSL"
+grep -q 'docker.sock' <<<"$OSL" && bad "OS container got the Docker socket" || ok "OS container has no Docker socket"
+TG=$(grep -o 'target=/rootfs/[a-z0-9]*,readonly,bind-recursive=disabled' <<<"$OSL" | sed 's/^target=\/rootfs\///; s/,.*//' | sort | tr '\n' ' ')
+[ "$TG" = "bin lib lib64 sbin usr " ] && ok "OS mounts: exactly /usr /lib /lib64 /bin /sbin, read-only, non-recursive (symlinked /opt skipped)" || bad "OS mounts: '$TG'"
+[ "$(grep -o -- '--mount' <<<"$OSL" | wc -l)" = 5 ] && [ "$(grep -o -- ' -v ' <<<"$OSL" | wc -l)" = 1 ] && grep -q -- "-v $W/osdata/unraid-trivy-scan/cache:/cache:ro" <<<"$OSL" \
+  && ok "OS container: 5 mounts plus the DB read-only, nothing else" || bad "OS extra mounts: $OSL"
+grep -qE "source=$OR/(mnt|boot|proc|sys|etc|var|dev|root|opt)|source=/(mnt|boot|proc|sys|etc|var)" <<<"$OSL" && bad "a forbidden directory was mounted" \
+  || ok "never mounted: /mnt /boot /proc /sys /etc /var (incl. /var/lib/docker) /opt-symlink"
+grep -q -- 'rootfs --cache-dir /cache .*--offline-scan --scanners vuln .*--skip-dirs /rootfs/lib/modules .* /rootfs$' <<<"$OSL" \
+  && ok "OS scan: trivy rootfs /rootfs, offline, vuln only, /lib/modules skipped" || bad "OS trivy args: $OSL"
+osrep() { php -r '$r=json_decode(file_get_contents($argv[1]),true); echo eval("return ".$argv[2].";"), "\n";' "$W/osdata/unraid-trivy-scan/report/report.json" "$1"; }
+[ "$(osrep '$r["images"][0]["kind"]." ".$r["images"][0]["name"]." ".$r["summary"]["os"]')" = "os Unraid OS 7.3.4 ok" ] && ok "report: OS target 'Unraid OS 7.3.4', scanned" || bad "report OS: $(osrep 'json_encode($r["images"])')"
+[ "$(osrep 'json_encode([$r["host"]["kernel"], $r["host"]["packages"]])')" = '["6.18.58-Unraid",[["bash","5.3.003","1"],["docker","29.8.2","1_LT"]]]' ] \
+  && ok "report: kernel and the Slackware package list read on the host" || bad "report host: $(osrep 'json_encode($r["host"])')"
+[ "$(sed -n 's/^message=//p' "$W/osdata/unraid-trivy-scan/report/last-run")" = "0 image(s) and the Unraid OS scanned, 0 failed" ] && ok "last-run message names the OS" || bad "last-run: $(cat "$W/osdata/unraid-trivy-scan/report/last-run")"
+printf 'version="$(touch %s/PWN6)"\n' "$W" >"$OR/etc/unraid-version"
+FAKE_OS_FAIL=1 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
+[ ! -e "$W/PWN6" ] && [ "$(osrep '$r["images"][0]["name"]')" = "Unraid OS unknown" ] && ok "hostile unraid-version: not executed, shown as 'unknown'" || bad "hostile unraid-version"
+[ "$(osrep '$r["images"][0]["scan"]." ".$r["images"][0]["error"]')" = "failed FATAL fake failure" ] && [ "$(sed -n 's/^message=//p' "$W/osdata/unraid-trivy-scan/report/last-run")" = "0 image(s) and the Unraid OS scanned, 1 failed" ] \
+  && ok "failed OS scan: listed with Trivy's error line, counted as failed" || bad "OS failure: $(osrep 'json_encode($r["images"])')"
+osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
+grep -q 'role=os' "$W/docker.log" && bad "OS_SCAN=no still ran an OS container" || ok "OS_SCAN=no: no OS container"
+[ "$(osrep 'json_encode($r["host"])." ".$r["summary"]["os"]')" = "null off" ] && ok "OS_SCAN=no: no OS target in the report" || bad "OS_SCAN=no report"
 
 # ---------------------------------------------------------------- .plg lifecycle
 PLG=$HERE/unraid-trivy-scan.plg

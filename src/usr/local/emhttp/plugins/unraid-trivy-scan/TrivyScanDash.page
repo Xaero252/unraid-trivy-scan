@@ -27,7 +27,8 @@ if ($uts_rep) {
               . " <span class='uts-tile-of'>of $tot</span></span>";
   }
   $img = (int)($uts_rep['summary']['images'] ?? 0); $fail = (int)($uts_rep['summary']['failed'] ?? 0);
-  $uts_rows .= "<div class='uts-tile-note'>Fixable CVEs shown first, total after. $img image(s) scanned"
+  $uts_os = ($uts_rep['summary']['os'] ?? 'off') === 'ok' ? ' and the Unraid OS' : '';
+  $uts_rows .= "<div class='uts-tile-note'>Fixable CVEs shown first, total after. $img image(s)$uts_os scanned"
             . ($fail ? ", <span class='uts-tile-fail'>$fail could not be scanned</span>" : '') . '</div>';
 } else {
   $uts_rows = "<div class='uts-tile-note'>Run a scan from the Trivy Scan settings page.</div>";
