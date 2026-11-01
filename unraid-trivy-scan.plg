@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name      "unraid-trivy-scan">
   <!ENTITY author    "unraid-trivy-scan project">
-  <!ENTITY version   "2026.11.01a">
+  <!ENTITY version   "2026.11.01b">
   <!ENTITY gitURL    "https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main">
   <!ENTITY pluginURL "&gitURL;/&name;.plg">
   <!ENTITY pkg       "&name;-&version;-x86_64-1.txz">
   <!ENTITY pkgURL    "&gitURL;/packages/&pkg;">
-  <!ENTITY md5       "308ba87d55ecce5b1a0b1356c0758430">
+  <!ENTITY md5       "ea237c56db602066187c3d20e0d9ac4a">
 ]>
 <!-- Vulnerability scan of Docker container images, and of the Unraid OS, with a pinned Trivy release.
      Install: Plugins, Install Plugin, https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main/unraid-trivy-scan.plg
@@ -19,6 +19,8 @@
         launch="Settings/TrivyScan" pluginURL="&pluginURL;" support="https://github.com/luuvasara/unraid-trivy-scan/issues">
 
 <CHANGES>
+###2026.11.01b
+- Fix: after updating to 2026.11.01a the buttons could still fail with "invalid csrf_token", because the browser kept the old script: the pages keyed their script and style URLs on the file time, which the package sets to the release day. They now use a hash of the file contents, so every change reaches the browser.
 ###2026.11.01a
 - Fix: the Scan now, Stop and Update database buttons failed with "Could not start: invalid csrf_token". Unraid's request prologue removes csrf_token from the form data after checking it, so the plugin's own second check never saw it; the page now also sends the token in the X-CSRF-Token header. A new test runs the buttons behind a prologue that behaves like Unraid's.
 ###2026.11.01

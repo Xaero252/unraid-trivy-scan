@@ -11,7 +11,7 @@ $uts_root = ($docroot ?? '/usr/local/emhttp') . '/plugins/unraid-trivy-scan';
 require_once "$uts_root/include/lib.php";
 $uts_bad = [];
 $uts = uts_config($uts_bad);
-$uts_v = (int)@filemtime("$uts_root/assets/settings.js");
+$uts_v = substr(md5(@md5_file("$uts_root/assets/settings.js") . @md5_file("$uts_root/assets/trivy-scan.css")), 0, 10); // content hash: build.sh pins every mtime to the release day
 $uts_image = trim((string)@shell_exec(escapeshellarg(uts_path('script')) . ' image 2>/dev/null'));
 $uts_presets = ['' => 'Disabled', '30 3 * * *' => 'Daily at 03:30', '30 3 * * 0' => 'Weekly, Sunday 03:30',
                 '30 3 1 * *' => 'Monthly, 1st at 03:30'];

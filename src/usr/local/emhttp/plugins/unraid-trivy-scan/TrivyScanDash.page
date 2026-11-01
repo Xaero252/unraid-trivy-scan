@@ -36,7 +36,7 @@ if ($uts_rep) {
 if (($uts_st['last']['result'] ?? '') === 'failed') {
   $uts_rows .= "<div class='uts-tile-note uts-tile-fail'>Last run failed: " . uts_h($uts_st['last']['message']) . '</div>';
 }
-$uts_v = (int)@filemtime("$uts_root/assets/trivy-scan.css");
+$uts_v = substr((string)@md5_file("$uts_root/assets/trivy-scan.css"), 0, 10); // content hash: build.sh pins every mtime to the release day
 $uts_sub_h = uts_h($uts_sub); $uts_link_h = uts_h($uts_link);
 $mytiles['unraid-trivy-scan']['column3'] = <<<EOT
 <tbody title="Trivy image scan" class="uts-tile">

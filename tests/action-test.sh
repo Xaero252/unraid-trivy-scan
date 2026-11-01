@@ -40,4 +40,7 @@ R=$(UTS_X=1 req -H "X-CSRF-Token: WRONGWRONGWRONG0" --data "action=start&csrf_to
 R=$(req -H "X-CSRF-Token: $TOKEN" --data "action=rm-rf")
 [ "${R##* }" = 400 ] && ok "unknown action: 400" || bad "unknown action: $R"
 grep -q "X-CSRF-Token" "$P/assets/report.js" && ok "report.js sends the X-CSRF-Token header" || bad "report.js does not send X-CSRF-Token"
+# Browsers must fetch the new report.js after an update. build.sh pins every file mtime to the release day, so a
+# filemtime() cache key stayed the same between two releases of one day and kept the old (broken) script cached.
+if grep -n 'filemtime' "$P"/*.page; then bad "a page still derives its asset cache key from filemtime"; else ok "asset cache keys are content hashes, not mtimes"; fi
 exit $fail

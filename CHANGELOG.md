@@ -2,6 +2,8 @@
 
 Copied by build.sh from the <CHANGES> block of unraid-trivy-scan.plg; edit the .plg, not this file.
 
+## 2026.11.01b
+- Fix: after updating to 2026.11.01a the buttons could still fail with "invalid csrf_token", because the browser kept the old script: the pages keyed their script and style URLs on the file time, which the package sets to the release day. They now use a hash of the file contents, so every change reaches the browser.
 ## 2026.11.01a
 - Fix: the Scan now, Stop and Update database buttons failed with "Could not start: invalid csrf_token". Unraid's request prologue removes csrf_token from the form data after checking it, so the plugin's own second check never saw it; the page now also sends the token in the X-CSRF-Token header. A new test runs the buttons behind a prologue that behaves like Unraid's.
 ## 2026.11.01
