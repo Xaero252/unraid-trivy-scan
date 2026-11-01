@@ -1,8 +1,9 @@
 <?php
 /* unraid-trivy-scan: POST endpoint for the page buttons (start, stop, update-db). Fixed command list, no user
- * input reaches the shell. Unraid's own request prologue (local_prepend.php) checks csrf_token on every POST and then
- * REMOVES it from $_POST, so the page also sends the token in the X-CSRF-Token header, which the prologue leaves in
- * place. This file checks it again against var.ini so it also holds where that prologue is absent. */
+ * input reaches the shell. On Unraid the request prologue (local_prepend.php, php auto_prepend_file) checks
+ * csrf_token on every POST and then unset()s BOTH $_POST['csrf_token'] and $_SERVER['HTTP_X_CSRF_TOKEN'], so a second
+ * check here can never see the token. The prologue defines csrf_terminate(); when it is present the token has been
+ * checked. Only without that prologue does this file check the token itself, against var.ini. */
 require_once __DIR__ . '/lib.php';
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
@@ -12,9 +13,11 @@ function uts_out(int $code, array $body): void { http_response_code($code); echo
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') uts_out(405, ['ok' => false, 'error' => 'POST only']);
 $var = @parse_ini_file(uts_path('varini'));
-$token = $_POST['csrf_token'] ?? ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
-if (!is_array($var) || !is_string($var['csrf_token'] ?? null) || $var['csrf_token'] === ''
-    || !is_string($token) || !hash_equals($var['csrf_token'], $token)) uts_out(403, ['ok' => false, 'error' => 'invalid csrf_token']);
+if (!function_exists('csrf_terminate')) {
+  $token = $_POST['csrf_token'] ?? ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
+  if (!is_array($var) || !is_string($var['csrf_token'] ?? null) || $var['csrf_token'] === ''
+      || !is_string($token) || !hash_equals($var['csrf_token'], $token)) uts_out(403, ['ok' => false, 'error' => 'invalid csrf_token']);
+}
 
 $actions = ['start' => 'start', 'stop' => 'stop', 'update-db' => 'update-db'];
 $a = $_POST['action'] ?? '';

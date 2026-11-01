@@ -14,11 +14,15 @@ printf '#!/bin/sh\necho "stub $1"\n' >"$W/script"; chmod 755 "$W/script"
 ln -s "$P" "$W/root/plugins/unraid-trivy-scan"
 cat >"$W/prepend.php" <<PHP
 <?php
+// Mirrors Unraid 7.3.4 /usr/local/emhttp/plugins/dynamix/include/local_prepend.php lines 17-51 (read on a server).
+function csrf_terminate(\$reason) { echo "prologue: \$reason csrf_token"; exit; }
 if ((\$_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
   \$var = parse_ini_file('$W/var.ini');
   \$t = \$_POST['csrf_token'] ?? (\$_SERVER['HTTP_X_CSRF_TOKEN'] ?? null);
-  if (\$t === null || !hash_equals(\$var['csrf_token'], \$t)) { http_response_code(200); echo 'prologue rejected'; exit; }
+  if (\$t === null) csrf_terminate("missing");
+  if (!hash_equals(\$var['csrf_token'], \$t)) csrf_terminate("wrong");
   unset(\$_POST['csrf_token']);
+  unset(\$_SERVER['HTTP_X_CSRF_TOKEN']);
 }
 PHP
 PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
@@ -34,9 +38,11 @@ done
 R=$(req -H "X-CSRF-Token: $TOKEN" --data "action=start")
 [ "${R##* }" = 200 ] && ok "header-only token accepted" || bad "header-only token: $R"
 R=$(req --data "action=start&csrf_token=$TOKEN")
-[ "${R##* }" = 403 ] && ok "body-only token (old report.js) is refused after the prologue strips it: 403" || bad "body-only token: $R"
-R=$(UTS_X=1 req -H "X-CSRF-Token: WRONGWRONGWRONG0" --data "action=start&csrf_token=$TOKEN")
-[ "${R##* }" = 403 ] && ok "wrong header token with a valid body token: 403" || bad "wrong header token: $R"
+[ "${R##* }" = 200 ] && ok "body-only token accepted (prologue checked it)" || bad "body-only token: $R"
+R=$(req --data "action=start&csrf_token=WRONGWRONGWRONG0")
+case "$R" in "prologue: wrong csrf_token"*) ok "wrong token stopped by the prologue";; *) bad "wrong token: $R";; esac
+R=$(req --data "action=start")
+case "$R" in "prologue: missing csrf_token"*) ok "missing token stopped by the prologue";; *) bad "missing token: $R";; esac
 R=$(req -H "X-CSRF-Token: $TOKEN" --data "action=rm-rf")
 [ "${R##* }" = 400 ] && ok "unknown action: 400" || bad "unknown action: $R"
 grep -q "X-CSRF-Token" "$P/assets/report.js" && ok "report.js sends the X-CSRF-Token header" || bad "report.js does not send X-CSRF-Token"
