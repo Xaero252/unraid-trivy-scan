@@ -1,0 +1,10 @@
+#!/bin/bash
+# Unraid runs this (emhttp_event, as root) when the array is stopped, just before Docker is stopped. A running scan
+# is stopped here so that it does not hold /mnt/user or leave scan containers behind. emhttp waits for this
+# script to finish ("the 'emhttp' process will hang until this script completes"), and "trivy-scan stop" can take
+# up to 30 s, so it runs detached and this script returns at once.
+S=${UTS_SCRIPT:-/usr/local/emhttp/plugins/unraid-trivy-scan/scripts/trivy-scan}
+if [ -x "$S" ]; then
+  setsid "$S" stop >/dev/null 2>&1 </dev/null &
+fi
+exit 0

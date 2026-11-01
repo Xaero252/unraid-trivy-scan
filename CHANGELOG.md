@@ -2,6 +2,14 @@
 
 Copied by build.sh from the <CHANGES> block of unraid-trivy-scan.plg; edit the .plg, not this file.
 
+## 2026.11.02
+- New: a running scan is now stopped when you stop the array (Unraid's "stopping Docker" event), so it no longer holds the shares open or leaves scan containers behind.
+- Change: the data folder now follows the "Default appdata location" of Settings, Docker (default /mnt/user/appdata, so nothing changes unless you moved it). If you did, the first scan downloads the databases again into the new place; the old folder can be deleted by hand. If the location is not available (array stopped), the scan says so and creates nothing.
+- Fix: when the settings form refused a value, the page still printed a "Scheduled scan" line as if the change had been applied. It now says "Settings NOT saved" in the same log style as Unraid's own pages and does not touch the schedule. Also logged to the system log.
+- Fix: a rejected security token (session expired, page left open) showed "HTTP 200" on the buttons; it now says to reload the page.
+- Fix: the header tab was labelled "TRIVYSCANTAB"; it is now labelled "Vulnerabilities" (Unraid takes the label of a header tab from the page's Name, not its Title).
+- The header tab is now only shown while the array is started, like other plugins' tabs. The settings form no longer carries a duplicate token field and stores its file by the relative name Unraid's own forms use.
+- Tests now run the settings save through copies of Unraid 7.3.4's real update.php and request prologue.
 ## 2026.11.01c
 - Fix: the Scan now, Stop and Update database buttons still failed with "invalid csrf_token". Unraid's request prologue removes the token from both the form data and the X-CSRF-Token header after checking it, so the plugin's own second check could never pass. The plugin now relies on Unraid's check and only checks the token itself where that prologue is absent. Verified against the real prologue of Unraid 7.3.4.
 ## 2026.11.01b

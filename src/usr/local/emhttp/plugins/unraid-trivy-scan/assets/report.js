@@ -4,6 +4,16 @@
  * Links: only https URLs from the report; CVE ids that look like CVE-YYYY-N link to NVD. */
 (function () {
   'use strict';
+  /* Answer of include/action.php as {ok, message|error}. When Unraid's request prologue (local_prepend.php) rejects the
+   * csrf_token it logs and exit()s: HTTP 200 with an empty body. That must not show up as "HTTP 200". */
+  function parseActionResponse(r) {
+    return r.text().then(function (t) {
+      if (t === '') return { ok: false, error: r.ok ? 'Session expired or the security token was rejected. Reload the page and try again.' : 'HTTP ' + r.status };
+      try { var j = JSON.parse(t); if (j && typeof j === 'object') return j; } catch (e) { /* not JSON */ }
+      return { ok: false, error: 'Unexpected answer (HTTP ' + r.status + ')' };
+    });
+  }
+  if (typeof module !== 'undefined' && module.exports) module.exports = { parseActionResponse: parseActionResponse };   // tests/action-ui.js
   var root = document.getElementById('uts-report');
   if (!root) return;
   var BASE = root.getAttribute('data-base');
@@ -85,7 +95,7 @@
     body.set('action', a); body.set('csrf_token', csrf());
     return fetch(BASE + '/include/action.php', { method: 'POST', credentials: 'same-origin', body: body,
                                                   headers: { 'X-CSRF-Token': csrf() } })
-      .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); });
+      .then(parseActionResponse);
   }
 
   /* ---------------- status bar ---------------- */

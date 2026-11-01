@@ -20,6 +20,26 @@ const UTS_DEFAULTS = [
   'REMOVE_DATA'    => 'no',      // on plugin removal delete the data dir and the pinned image
 ];
 
+/* Where Docker keeps appdata: DOCKER_APP_CONFIG_PATH in /boot/config/docker.cfg (Settings, Docker, "Default appdata
+ * location"; Unraid's own default is /mnt/user/appdata/). Read as data, never executed; the last assignment wins as
+ * in parse_ini_file. Only a plain absolute path under /mnt is accepted (letters, digits and . _ + @ -, no dot
+ * segments); anything else, or no file, gives /mnt/user/appdata. The same rules are in appdata_root() in
+ * scripts/trivy-scan (tests/unit.sh compares both). */
+function uts_appdata_root(?string $file = null): string {
+  $def = '/mnt/user/appdata';
+  $raw = @file_get_contents($file ?? (($v = getenv('UTS_DOCKER_CFG')) !== false && $v !== '' ? $v : '/boot/config/docker.cfg'));
+  if ($raw === false) return $def;
+  $val = null;
+  foreach (preg_split('/\r?\n/', $raw) as $line) {
+    if (preg_match('/^DOCKER_APP_CONFIG_PATH=(.*)$/', rtrim($line, "\r"), $m)) $val = $m[1];
+  }
+  if ($val === null) return $def;
+  if (strlen($val) >= 2 && $val[0] === '"' && substr($val, -1) === '"') $val = substr($val, 1, -1);
+  $val = rtrim($val, '/');
+  if (!preg_match('#^/mnt/[A-Za-z0-9._+@-]+(/[A-Za-z0-9._+@-]+)*$#', $val) || preg_match('#(^|/)\.\.?(/|$)#', $val)) return $def;
+  return $val;
+}
+
 /* Paths. The UTS_* environment overrides exist for the offline test harness only; Unraid's php-fpm clears
  * the environment, so on a server these are always the literal defaults. */
 function uts_path(string $what): string {
@@ -28,7 +48,7 @@ function uts_path(string $what): string {
     $env = fn($k, $d) => (($v = getenv($k)) !== false && $v !== '') ? $v : $d;
     $p = [
       'cfg'    => $env('UTS_CFG', '/boot/config/plugins/' . UTS_NAME . '/' . UTS_NAME . '.cfg'),
-      'data'   => $env('UTS_DATA', '/mnt/user/appdata/' . UTS_NAME),
+      'data'   => $env('UTS_DATA', uts_appdata_root() . '/' . UTS_NAME),
       'run'    => $env('UTS_RUN', '/var/run/' . UTS_NAME),
       'varini' => $env('UTS_VARINI', '/var/local/emhttp/var.ini'),
       'script' => $env('UTS_SCRIPT', '/usr/local/emhttp/plugins/' . UTS_NAME . '/scripts/trivy-scan'),

@@ -1,0 +1,25 @@
+# Invoke all 'any_event' scripts that might exist
+for Dir in /usr/local/emhttp/plugins/* ; do
+  if [ -d $Dir/event/any_event ]; then
+    for File in $Dir/event/any_event/* ; do
+      if [ -x $File ]; then
+      	$File "$@"
+      fi
+    done
+  elif [ -x $Dir/event/any_event ]; then
+    $Dir/event/any_event "$@"
+  fi
+done
+
+# Invoke specific event scripts that might exist for this event
+for Dir in /usr/local/emhttp/plugins/* ; do
+  if [ -d $Dir/event/$1 ]; then
+    for File in $Dir/event/$1/* ; do
+      if [ -x $File ]; then
+      	$File "$@"
+      fi
+    done
+  elif [ -x $Dir/event/$1 ]; then
+    $Dir/event/$1 "$@"
+  fi
+done

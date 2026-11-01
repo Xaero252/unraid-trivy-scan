@@ -23,5 +23,10 @@ foreach (array_keys($keys) as $k) {
 }
 if ($uts_errors) {
   $save = false;
-  echo 'Settings NOT saved, invalid value for: ' . uts_h(implode(', ', $uts_errors)) . "\n";
+  // update.php runs #command (our "apply") even when $save is false (update.php:109), and its "Scheduled scan: ..."
+  // line would suggest the new settings took effect: drop the command, as nothing was changed.
+  unset($_POST['#command']);
+  $uts_msg = 'Settings NOT saved, invalid value for: ' . uts_h(implode(', ', $uts_errors)) . '. Nothing was changed.';
+  if (function_exists('write_log')) { write_log($uts_msg); @syslog(LOG_INFO, 'unraid-trivy-scan: ' . $uts_msg); }   // update.php's progress log (update.file.php:15 and others)
+  else echo $uts_msg . "\n";
 }

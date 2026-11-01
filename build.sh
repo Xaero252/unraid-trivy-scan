@@ -20,7 +20,8 @@ chmod 755 "$ST"
 cp -a "$HERE/src/." "$ST/"
 find "$ST" -type d -exec chmod 755 {} +
 find "$ST" -type f -exec chmod 644 {} +
-chmod 755 "$ST/$P/scripts/trivy-scan"
+chmod 755 "$ST/$P/scripts/trivy-scan" "$ST/$P/event/stopping_docker"   # emhttp_event runs only executable event files
+bash -n "$ST/$P/event/stopping_docker"
 bash -n "$ST/$P/scripts/trivy-scan"
 for f in "$ST/$P"/*.page "$ST/$P"/include/*.php; do
   LINT=$(php -d short_open_tag=1 -l "$f" 2>&1) || { echo "FATAL: php -l failed: $LINT"; exit 1; }

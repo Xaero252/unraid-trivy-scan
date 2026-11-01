@@ -181,6 +181,50 @@ osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
 grep -q 'role=os' "$W/docker.log" && bad "OS_SCAN=no still ran an OS container" || ok "OS_SCAN=no: no OS container"
 [ "$(osrep 'json_encode($r["host"])." ".$r["summary"]["os"]')" = "null off" ] && ok "OS_SCAN=no: no OS target in the report" || bad "OS_SCAN=no report"
 
+# ---------------------------------------------------------------- data dir follows Docker's appdata location (F2)
+# Real file: /boot/config/docker.cfg line 4 on a 7.3.4 server is DOCKER_APP_CONFIG_PATH="/mnt/user/appdata/" (quoted, trailing slash).
+dd_sh()  { printf '%s' "$1" >"$W/dd.cfg"; UTS_DOCKER_CFG=$W/dd.cfg bash "$S" datadir; }
+dd_php() { printf '%s' "$1" >"$W/dd.cfg"; UTS_DOCKER_CFG=$W/dd.cfg php -r 'require $argv[1]; echo uts_path("data");' "$P/include/lib.php"; }
+while IFS='|' read -r want cfg; do
+  [ -z "$want" ] && continue
+  cfg=${cfg//\\n/$'\n'}
+  a=$(dd_sh "$cfg"); b=$(dd_php "$cfg")
+  [ "$a" = "$want" ] && [ "$b" = "$want" ] && ok "datadir '${cfg//$'\n'/ ; }' -> $want (bash and PHP)" || bad "datadir '$cfg': want $want, bash '$a', php '$b'"
+done <<'CASES'
+/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/user/appdata/"\nDOCKER_APP_UNRAID_PATH=""\n
+/mnt/cache/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/cache/appdata/"\n
+/mnt/fast_pool/docker-appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH=/mnt/fast_pool/docker-appdata\n
+/mnt/cache/b/unraid-trivy-scan|A=1\nDOCKER_APP_CONFIG_PATH="/mnt/user/a"\nDOCKER_APP_CONFIG_PATH="/mnt/cache/b/"\n
+/mnt/user/appdata/unraid-trivy-scan|DOCKER_ENABLED="yes"\n
+/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH=""\n
+/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/etc/appdata"\n
+/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/user/../../etc"\n
+/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/user/a b"\n
+/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/user/a:/b"\n
+/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/user/$(id)"\n
+/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/"\n
+/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/user//x"\n
+CASES
+[ "$(UTS_DOCKER_CFG=$W/nonexistent.cfg bash "$S" datadir)" = /mnt/user/appdata/unraid-trivy-scan ] && ok "datadir: no docker.cfg -> /mnt/user/appdata/unraid-trivy-scan" || bad "datadir without docker.cfg"
+# array stopped / location missing: nothing is created, not even last-run (mkdir -p would build /mnt/... in RAM)
+printf '#!/bin/sh\nexit 1\n' >"$W/bin/docker-down"; MISSING=$W/not-mounted/appdata
+PATH="$W/bin:$PATH" UTS_DATA=$MISSING/unraid-trivy-scan UTS_RUN=$W/run-miss UTS_LOG=$W/miss.log UTS_CFG=$W/none.cfg bash "$S" run
+RC=$?
+[ "$RC" = 1 ] && [ ! -e "$W/not-mounted" ] && grep -q 'does not exist' "$W/miss.log" && ok "missing appdata parent: scan refuses (rc 1), logs why, creates nothing" || bad "missing parent: rc=$RC, $(ls "$W/not-mounted" 2>&1), $(cat "$W/miss.log" 2>&1)"
+FDOCK=$W/bin2; mkdir -p "$FDOCK"; printf '#!/bin/sh\nexit 1\n' >"$FDOCK/docker"; chmod 755 "$FDOCK/docker"
+PATH="$FDOCK:$PATH" UTS_DATA=$MISSING/unraid-trivy-scan UTS_RUN=$W/run-miss UTS_LOG=$W/miss.log UTS_CFG=$W/none.cfg bash "$S" run
+[ ! -e "$W/not-mounted" ] && ok "Docker down AND appdata missing: still nothing created (array-stopped cron run)" || bad "created $W/not-mounted"
+grep -q 'uts_path(.data.))' "$P/TrivyScanSettings.page" && ! grep -q '<code>/mnt/user/appdata' "$P/TrivyScanSettings.page" && ok "settings page shows the real data directory" || bad "settings page hard-codes the data path"
+
+# Header tabs (Menu="Tasks:n"): Unraid labels them with the page's Name, else the upper-cased file name
+# (read on a 7.3.4 server: dynamix/include/DefaultPageLayout/Navigation/Main.php:23 `_(_var($button, 'Name', $pageName))`).
+# 2026.11.01c shipped TrivyScanTab.page without Name and showed "TRIVYSCANTAB".
+for f in "$P"/*.page; do
+  if grep -Eq '^Menu="Tasks(:[0-9]+)?"' "$f"; then
+    grep -Eq '^Name="[A-Za-z][A-Za-z ]+"$' "$f" && ok "Tasks page $(basename "$f") has a Name (header tab label)" || bad "Tasks page $(basename "$f") has no Name: the tab would show the file name"
+  fi
+done
+
 # ---------------------------------------------------------------- .plg lifecycle
 PLG=$HERE/unraid-trivy-scan.plg
 INST=$(php -r '$d=new DOMDocument(); $d->substituteEntities=true; $d->load($argv[1], LIBXML_NOENT); foreach ($d->getElementsByTagName("FILE") as $f) { if ($f->getAttribute("Method")==="remove") continue; foreach ($f->getElementsByTagName("INLINE") as $i) echo $i->textContent, "\n"; }' "$PLG")
@@ -197,6 +241,10 @@ MD5=$(sed -n 's/^ *<!ENTITY md5 *"\([^"]*\)">.*/\1/p' "$PLG"); PKG=$HERE/package
 [ -f "$PKG" ] && [ "$(md5sum <"$PKG" | cut -d' ' -f1)" = "$MD5" ] && [ "$(cut -d' ' -f1 "$PKG.md5")" = "$MD5" ] \
   && ok "package and .md5 match the .plg &md5;" || bad "package md5 (run ./build.sh)"
 cmp -s <(tar -xJOf "$PKG" ./usr/local/emhttp/plugins/unraid-trivy-scan/scripts/trivy-scan) "$S" && ok "package contains the current scripts/trivy-scan" || bad "package is stale (run ./build.sh)"
+[ -x "$P/event/stopping_docker" ] && ok "event/stopping_docker is executable in the tree (emhttp_event runs only executable files)" || bad "event/stopping_docker not executable"
+grep -q 'chmod 755 /usr/local/emhttp/plugins/unraid-trivy-scan/event/stopping_docker' <<<"$INST" && ok "post-install sets 755 on the event script" || bad "post-install does not chmod the event script"
+tar -tJvf "$PKG" | grep -q '^-rwxr-xr-x 0/0 .* ./usr/local/emhttp/plugins/unraid-trivy-scan/event/stopping_docker$' \
+  && ok "package ships event/stopping_docker as -rwxr-xr-x root/root" || bad "package lacks an executable event/stopping_docker: $(tar -tJvf "$PKG" | grep event)"
 grep -c 'TRIVY_IMAGE=' "$S" | grep -qx 1 && ! grep -rq 'aquasec/trivy:' "$P" --include=*.php --include=*.page && ok "the Trivy image is named in exactly one place" || bad "Trivy image named in more than one place"
 
 # ---------------------------------------------------------------- aggregate on fixture Trivy JSON
