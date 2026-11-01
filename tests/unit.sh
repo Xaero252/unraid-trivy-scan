@@ -243,11 +243,16 @@ MD5=$(sed -n 's/^ *<!ENTITY md5 *"\([^"]*\)">.*/\1/p' "$PLG"); PKG=$HERE/package
 cmp -s <(tar -xJOf "$PKG" ./usr/local/emhttp/plugins/unraid-trivy-scan/scripts/trivy-scan) "$S" && ok "package contains the current scripts/trivy-scan" || bad "package is stale (run ./build.sh)"
 [ -x "$P/event/stopping_docker" ] && ok "event/stopping_docker is executable in the tree (emhttp_event runs only executable files)" || bad "event/stopping_docker not executable"
 grep -q 'chmod 755 /usr/local/emhttp/plugins/unraid-trivy-scan/event/stopping_docker' <<<"$INST" && ok "post-install sets 755 on the event script" || bad "post-install does not chmod the event script"
-tar -tJvf "$PKG" | grep -q '^-rwxr-xr-x 0/0 .* ./usr/local/emhttp/plugins/unraid-trivy-scan/event/stopping_docker$' \
+PKG_LIST=$(tar -tJvf "$PKG")   # list first: "tar | grep -q" under pipefail fails at random when grep exits early (SIGPIPE)
+grep -q '^-rwxr-xr-x 0/0 .* ./usr/local/emhttp/plugins/unraid-trivy-scan/event/stopping_docker$' <<<"$PKG_LIST" \
   && ok "package ships event/stopping_docker as -rwxr-xr-x root/root" || bad "package lacks an executable event/stopping_docker: $(tar -tJvf "$PKG" | grep event)"
 grep -c 'TRIVY_IMAGE=' "$S" | grep -qx 1 && ! grep -rq 'aquasec/trivy:' "$P" --include=*.php --include=*.page && ok "the Trivy image is named in exactly one place" || bad "Trivy image named in more than one place"
 
 # ---------------------------------------------------------------- aggregate on fixture Trivy JSON
 php "$HERE/tests/aggregate-test.php" "$HERE" || fail=1
 
+# Every literal status message must survive clean() (scripts/trivy-scan), which turns any other character into '?':
+# 2026.11.02 showed "scan stopped before it finished? the previous report is kept" because of a ';'.
+bad_msgs=$(grep -oE 'last_run [a-z]+ "[^"$]*"' "$S" | sed -E 's/^last_run [a-z]+ "(.*)"$/\1/' | LC_ALL=C grep -n "[^A-Za-z0-9._/:@ ()+,=-]")
+[ -z "$bad_msgs" ] && ok "status messages contain only characters clean() keeps" || bad "status messages clean() would mangle: $bad_msgs"
 exit $fail

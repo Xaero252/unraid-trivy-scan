@@ -322,7 +322,7 @@ on_signal() {
   log "stop requested"
   [ -n "$CHILD" ] && kill "$CHILD" 2>/dev/null
   kill_containers "$RUN_ID"
-  last_run stopped "scan stopped before it finished; the previous report is kept"
+  last_run stopped "scan stopped before it finished, the previous report is kept"
   exit 143
 }
 on_exit() {
@@ -367,7 +367,7 @@ do_run() {
   [ ${#CFG_PROBLEMS[@]} -gt 0 ] && warn "invalid settings ignored, defaults used: ${CFG_PROBLEMS[*]}"
   preflight
   if ! update_db; then
-    last_run failed "no vulnerability database available (download failed); the previous report is kept"
+    last_run failed "no vulnerability database available (download failed), the previous report is kept"
     log "no vulnerability DB"; exit 1
   fi
   if [ "${C[JAVA_DB]}" = yes ] && [ ! -s "$DATA/cache/java-db/trivy-java.db" ]; then

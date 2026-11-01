@@ -3,6 +3,7 @@
 Copied by build.sh from the <CHANGES> block of unraid-trivy-scan.plg; edit the .plg, not this file.
 
 ## 2026.11.02
+- Fix: the "scan stopped" and "no vulnerability database" status lines showed a stray "?" where a semicolon was.
 - New: a running scan is now stopped when you stop the array (Unraid's "stopping Docker" event), so it no longer holds the shares open or leaves scan containers behind.
 - Change: the data folder now follows the "Default appdata location" of Settings, Docker (default /mnt/user/appdata, so nothing changes unless you moved it). If you did, the first scan downloads the databases again into the new place; the old folder can be deleted by hand. If the location is not available (array stopped), the scan says so and creates nothing.
 - Fix: when the settings form refused a value, the page still printed a "Scheduled scan" line as if the change had been applied. It now says "Settings NOT saved" in the same log style as Unraid's own pages and does not touch the schedule. Also logged to the system log.
