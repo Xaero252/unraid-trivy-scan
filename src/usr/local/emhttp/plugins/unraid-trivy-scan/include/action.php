@@ -1,7 +1,8 @@
 <?php
 /* unraid-trivy-scan: POST endpoint for the page buttons (start, stop, update-db). Fixed command list, no user
- * input reaches the shell. Unraid's own request prologue already checks csrf_token on every POST; this file
- * checks it again against var.ini so it also holds where that prologue is absent. */
+ * input reaches the shell. Unraid's own request prologue (local_prepend.php) checks csrf_token on every POST and then
+ * REMOVES it from $_POST, so the page also sends the token in the X-CSRF-Token header, which the prologue leaves in
+ * place. This file checks it again against var.ini so it also holds where that prologue is absent. */
 require_once __DIR__ . '/lib.php';
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
@@ -11,7 +12,7 @@ function uts_out(int $code, array $body): void { http_response_code($code); echo
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') uts_out(405, ['ok' => false, 'error' => 'POST only']);
 $var = @parse_ini_file(uts_path('varini'));
-$token = $_POST['csrf_token'] ?? '';
+$token = $_POST['csrf_token'] ?? ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
 if (!is_array($var) || !is_string($var['csrf_token'] ?? null) || $var['csrf_token'] === ''
     || !is_string($token) || !hash_equals($var['csrf_token'], $token)) uts_out(403, ['ok' => false, 'error' => 'invalid csrf_token']);
 

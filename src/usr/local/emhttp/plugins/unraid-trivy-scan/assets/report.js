@@ -83,7 +83,8 @@
   function action(a) {
     var body = new URLSearchParams();
     body.set('action', a); body.set('csrf_token', csrf());
-    return fetch(BASE + '/include/action.php', { method: 'POST', credentials: 'same-origin', body: body })
+    return fetch(BASE + '/include/action.php', { method: 'POST', credentials: 'same-origin', body: body,
+                                                  headers: { 'X-CSRF-Token': csrf() } })
       .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); });
   }
 

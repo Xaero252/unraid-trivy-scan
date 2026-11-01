@@ -8,6 +8,7 @@ rc=0
 section() { echo; echo "== $*"; }
 section lint;   "$T/lint.sh" || rc=1
 section unit;   "$T/unit.sh" || rc=1
+section action; "$T/action-test.sh" || rc=1
 if [ "${1:-}" = --e2e ]; then
   section e2e;  E2E_KEEP=${E2E_KEEP:-0} "$T/e2e.sh" || rc=1
   section render; DEMO_REPORT=$T/.work/e2e/report-registry.json "$T/render/render-test.sh" || rc=1
