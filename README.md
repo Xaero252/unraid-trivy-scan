@@ -37,7 +37,7 @@ Requires Unraid 7.0 or later. Nothing is scanned or downloaded at install time o
 
 The first scan downloads the pinned Trivy image (about 60 MB) and the vulnerability database (about 1.6 GB on
 disk), plus about 1.5 GB for the Java database unless you turn that off, and, for the OS package match, the pinned
-Grype image and its database. All of it goes to the data directory, `<Docker appdata>/unraid-trivy-scan`. Under
+Grype image and its database (about 3.1 GB on disk). All of it goes to the data directory, `<Docker appdata>/unraid-trivy-scan`. Under
 **Settings, Trivy Scan, Databases** you choose for each database whether it is kept there between scans (then it is
 only refreshed when a newer build exists, about daily) or downloaded for every scan and deleted afterwards; the page
 shows each one's size (on disk now, at its last download, or an estimate). Defaults: the two Trivy databases are

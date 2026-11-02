@@ -502,7 +502,7 @@
       $body.replaceChildren(el('div', { className: 'uts-empty-state' },
         el('h3', null, 'No report yet'),
         el('p', null, 'Press "Scan now", or set a schedule on the Settings tab.'),
-        el('p', null, 'The first scan downloads the pinned Trivy image (about 60 MB), the vulnerability database (about 1.6 GB on disk) and, if enabled, the Java database (about 1.5 GB). With the OS package match on, it also downloads the pinned Grype image and its database (about 200 MB to download, larger once unpacked; the Settings tab shows its size on disk).'),
+        el('p', null, 'The first scan downloads the pinned Trivy image (about 60 MB), the vulnerability database (about 1.6 GB on disk) and, if enabled, the Java database (about 1.5 GB). With the OS package match on, it also downloads the pinned Grype image and its database (about 200 MB to download, about 3.1 GB on disk once unpacked).'),
         el('p', null, 'On the Settings tab, under "Databases", you choose for each database whether it is kept on disk between scans (then it is only refreshed when a newer one is published, about once a day) or downloaded for every scan and deleted afterwards (no disk space used between scans, but the full download each time).')));
       return;
     }
